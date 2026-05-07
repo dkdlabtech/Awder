@@ -1,0 +1,8 @@
+@import "tailwindcss";
+
+@theme {
+  --color-awder-gold: #C2A350;
+  --color-awder-ocre: #A64B2A;
+  --color-awder-offwhite: #FAF9F6;
+  --color-awder-brun: #4E342E;
+}

@@ -1,0 +1,103 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // Validation Blueprints
+    function isValidNotification(data) {
+      return data.userId == request.auth.uid &&
+             data.title is string && data.title.size() <= 100 &&
+             data.message is string && data.message.size() <= 500 &&
+             data.type in ['booking_request', 'check_out', 'system'] &&
+             data.read is bool &&
+             data.keys().hasAll(['userId', 'title', 'message', 'type', 'read', 'createdAt']) &&
+             data.keys().size() == 6;
+    }
+
+    function isValidReview(data) {
+      return (data.fromUserId == request.auth.uid) &&
+             data.rating >= 1 && data.rating <= 5 &&
+             data.bookingId is string &&
+             data.keys().hasAll(['bookingId', 'fromUserId', 'toUserId', 'rating', 'createdAt']) &&
+             data.keys().size() >= 4;
+    }
+
+    // User Rules
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow create: if isOwner(userId) && 
+        incoming().keys().hasAll(['displayName', 'email', 'role', 'createdAt']) &&
+        incoming().isVerified == false;
+      allow update: if isOwner(userId) && 
+        incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'phoneNumber', 'idCardUrl', 'role', 'isVerified', 'updatedAt', 'totalGains']);
+    }
+
+    // Listing Rules
+    match /listings/{listingId} {
+      allow read: if true;
+      allow create: if isSignedIn() && incoming().hostId == request.auth.uid;
+      allow update: if isSignedIn() && existing().hostId == request.auth.uid;
+      allow delete: if isSignedIn() && existing().hostId == request.auth.uid;
+    }
+
+    // Booking Rules
+    match /bookings/{bookingId} {
+      allow read: if isSignedIn() && (resource.data.guestId == request.auth.uid || resource.data.hostId == request.auth.uid);
+      allow create: if isSignedIn() && incoming().guestId == request.auth.uid;
+      allow update: if isSignedIn() && (
+        // Guest validates check-in or cancels
+        (existing().guestId == request.auth.uid && 
+         incoming().diff(existing()).affectedKeys().hasAny(['status', 'cautionStatus', 'checkInStatus'])) ||
+        // Host accepts
+        (existing().hostId == request.auth.uid && 
+         incoming().diff(existing()).affectedKeys().hasOnly(['status']))
+      );
+    }
+
+    // Notification Rules
+    match /notifications/{notificationId} {
+      allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn(); // System/other users can trigger notifications
+      allow update: if isSignedIn() && 
+                    resource.data.userId == request.auth.uid && 
+                    incoming().diff(existing()).affectedKeys().hasOnly(['read']);
+      allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+    }
+
+    // Review Rules
+    match /reviews/{reviewId} {
+      allow read: if true;
+      allow create: if isSignedIn() && isValidReview(incoming());
+    }
+
+    // Guide Rules
+    match /guides/{guideId} {
+      allow read: if true;
+      allow write: if isSignedIn(); // Only hosts should write, but simplifying for now
+    }
+  }
+}

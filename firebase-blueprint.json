@@ -1,0 +1,146 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Represents a user in the system (Host or Guest).",
+      "type": "object",
+      "properties": {
+        "displayName": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "role": { "type": "string", "enum": ["host", "guest", "admin"] },
+        "idCardUrl": { "type": "string", "description": "URL to the user's ID document." },
+        "isVerified": { "type": "boolean" },
+        "idVerificationStatus": { "type": "string", "enum": ["none", "pending", "verified", "rejected"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "phoneNumber": { "type": "string" },
+        "totalGains": { "type": "number", "description": "Total earned as a host" }
+      },
+      "required": ["displayName", "email", "role"]
+    },
+    "Listing": {
+      "title": "Listing",
+      "description": "Represents an accommodation or event space.",
+      "type": "object",
+      "properties": {
+        "hostId": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "type": { "type": "string", "enum": ["accommodation", "event"] },
+        "pricingType": { "type": "string", "enum": ["nightly", "hourly"] },
+        "price": { "type": "number" },
+        "cautionAmount": { "type": "number" },
+        "capacity": { "type": "integer" },
+        "amenities": { "type": "array", "items": { "type": "string" } },
+        "availability": { "type": "array", "items": { "type": "string" }, "description": "Dates blocked by the host" },
+        "pricingSchedule": {
+          "type": "object",
+          "properties": {
+            "weekend": { "type": "number" },
+            "holiday": { "type": "number" }
+          }
+        },
+        "location": {
+          "type": "object",
+          "properties": {
+            "city": { "type": "string", "enum": ["Dakar", "Saly", "Bamako"] },
+            "address": { "type": "string" },
+            "neighborhood": { "type": "string" }
+          }
+        },
+        "images": { "type": "array", "items": { "type": "string" } },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["hostId", "title", "type", "price", "location"]
+    },
+    "Booking": {
+      "title": "Booking",
+      "description": "Represents a reservation made by a guest.",
+      "type": "object",
+      "properties": {
+        "listingId": { "type": "string" },
+        "hostId": { "type": "string" },
+        "guestId": { "type": "string" },
+        "startDate": { "type": "string", "format": "date-time" },
+        "endDate": { "type": "string", "format": "date-time" },
+        "status": { "type": "string", "enum": ["pending", "paid_escrow", "completed", "cancelled"] },
+        "checkInStatus": { "type": "string", "enum": ["pending", "checked_in", "checked_out"] },
+        "totalPrice": { "type": "number" },
+        "cautionAmount": { "type": "number" },
+        "cautionStatus": { "type": "string", "enum": ["blocked", "released", "claimed"] },
+        "paymentMethod": { "type": "string", "enum": ["wave", "orange_money"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["listingId", "hostId", "guestId", "startDate", "endDate", "status", "totalPrice"]
+    },
+    "Review": {
+      "title": "Review (Diya)",
+      "description": "Mutual ratings between host and guest.",
+      "type": "object",
+      "properties": {
+        "bookingId": { "type": "string" },
+        "fromUserId": { "type": "string" },
+        "toUserId": { "type": "string" },
+        "rating": { "type": "number", "minimum": 1, "maximum": 5 },
+        "cleanliness": { "type": "number" },
+        "communication": { "type": "number" },
+        "welcome": { "type": "number" },
+        "comment": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["bookingId", "fromUserId", "toUserId", "rating"]
+    },
+    "LocalGuide": {
+      "title": "Local Guide",
+      "description": "Recommendations from hosts.",
+      "type": "object",
+      "properties": {
+        "listingId": { "type": "string" },
+        "category": { "type": "string", "enum": ["restaurant", "market", "artisan", "other"] },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "location": { "type": "string" }
+      },
+      "required": ["title", "category"]
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "Alerts for users (booking requests, check-outs, etc.)",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "message": { "type": "string" },
+        "type": { "type": "string", "enum": ["booking_request", "check_out", "system"] },
+        "read": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "title", "message", "type", "read"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles"
+    },
+    "/listings/{listingId}": {
+      "schema": "Listing",
+      "description": "Accommodations and events"
+    },
+    "/bookings/{bookingId}": {
+      "schema": "Booking",
+      "description": "Booking transactions"
+    },
+    "/reviews/{reviewId}": {
+      "schema": "Review",
+      "description": "Diya ratings"
+    },
+    "/guides/{guideId}": {
+      "schema": "LocalGuide",
+      "description": "Local neighborhood guides"
+    },
+    "/notifications/{notificationId}": {
+      "schema": "Notification",
+      "description": "User notifications"
+    }
+  }
+}
