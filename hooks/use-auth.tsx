@@ -6,7 +6,10 @@ import {
   signInWithPopup, 
   GoogleAuthProvider, 
   signOut,
-  User as FirebaseUser
+  User as FirebaseUser,
+  RecaptchaVerifier,
+  signInWithPhoneNumber,
+  ConfirmationResult
 } from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { auth, db } from '@/lib/firebase';
@@ -16,6 +19,8 @@ interface AuthContextType {
   profile: any | null;
   loading: boolean;
   signIn: () => Promise<void>;
+  signInWithPhone: (phoneNumber: string, recaptchaContainerId: string) => Promise<ConfirmationResult>;
+  verifyCode: (confirmationResult: ConfirmationResult, code: string) => Promise<void>;
   logout: () => Promise<void>;
 }
 
@@ -24,6 +29,8 @@ const AuthContext = createContext<AuthContextType>({
   profile: null,
   loading: true,
   signIn: async () => {},
+  signInWithPhone: async () => ({} as ConfirmationResult),
+  verifyCode: async () => {},
   logout: async () => {},
 });
 
@@ -99,6 +106,17 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
               createdAt: new Date().toISOString(),
             };
             await setDoc(docRef, newProfile);
+            
+            // ISI: Initialize Wallet
+            const walletRef = doc(db, 'wallets', user.uid);
+            await setDoc(walletRef, {
+              userId: user.uid,
+              balance: 0,
+              escrow: 0,
+              currency: 'XOF',
+              updatedAt: new Date().toISOString()
+            });
+
             setProfile(newProfile);
           }
         } catch (error) {
@@ -122,6 +140,27 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     }
   };
 
+  const signInWithPhone = async (phoneNumber: string, recaptchaContainerId: string) => {
+    try {
+      const recaptchaVerifier = new RecaptchaVerifier(auth, recaptchaContainerId, {
+        size: 'invisible',
+      });
+      return await signInWithPhoneNumber(auth, phoneNumber, recaptchaVerifier);
+    } catch (error) {
+      console.error("Error signing in with phone", error);
+      throw error;
+    }
+  };
+
+  const verifyCode = async (confirmationResult: ConfirmationResult, code: string) => {
+    try {
+      await confirmationResult.confirm(code);
+    } catch (error) {
+      console.error("Error verifying code", error);
+      throw error;
+    }
+  };
+
   const logout = async () => {
     try {
       await signOut(auth);
@@ -131,7 +170,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ user, profile, loading, signIn, logout }}>
+    <AuthContext.Provider value={{ user, profile, loading, signIn, signInWithPhone, verifyCode, logout }}>
       {children}
     </AuthContext.Provider>
   );

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { MobileLayout } from '@/components/mobile-layout';
 import { SearchFilters } from '@/components/search-filters';
 import { ListingCard } from '@/components/listing-card';
@@ -53,16 +53,23 @@ import {
 import { 
   collection, 
   addDoc, 
+  setDoc,
   query, 
   where, 
   getDocs, 
   updateDoc, 
-  doc 
+  doc,
+  onSnapshot,
+  orderBy,
+  limit,
+  increment,
+  serverTimestamp
 } from 'firebase/firestore';
 import { db, auth } from '@/lib/firebase';
 import { format } from 'date-fns';
 import Image from 'next/image';
 import { formatPrice } from '@/lib/utils';
+import { ConfirmationResult } from 'firebase/auth';
 
 enum OperationType {
   CREATE = 'create',
@@ -155,9 +162,17 @@ const MOCK_LISTINGS = [
 ];
 
 export default function HomeView() {
-  const { user, signIn, profile } = useAuth();
+  const { user, signIn, signInWithPhone, verifyCode, logout, profile } = useAuth();
   const [activeTab, setActiveTab] = useState<'home' | 'bookings' | 'profile' | 'messages'>('home');
   const [userMode, setUserMode] = useState<'voyageur' | 'hote'>('voyageur');
+
+  // OTP State
+  const [showLoginModal, setShowLoginModal] = useState(false);
+  const [phoneNumber, setPhoneNumber] = useState('');
+  const [verificationCode, setVerificationCode] = useState('');
+  const [confirmationResult, setConfirmationResult] = useState<ConfirmationResult | null>(null);
+  const [otpStep, setOtpStep] = useState<'phone' | 'code'>('phone');
+  const [authError, setAuthError] = useState('');
 
   // Sync userMode with profile role
   React.useEffect(() => {
@@ -170,7 +185,59 @@ export default function HomeView() {
   const [selectedListing, setSelectedListing] = useState<any>(null);
   const [showPayment, setShowPayment] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [listings, setListings] = useState<any[]>([]);
+  const [wallet, setWallet] = useState<any>(null);
+  const [transactions, setTransactions] = useState<any[]>([]);
   const [userBookings, setUserBookings] = useState<any[]>([]);
+
+  // Fetch Listings
+  useEffect(() => {
+    const q = query(collection(db, 'listings'), orderBy('createdAt', 'desc'));
+    const unsubscribe = onSnapshot(q, (snap) => {
+      setListings(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, (e) => handleFirestoreError(e, OperationType.LIST, 'listings'));
+    return () => unsubscribe();
+  }, []);
+
+  // Fetch Wallet
+  useEffect(() => {
+    if (!user) return;
+    const unsubscribe = onSnapshot(doc(db, 'wallets', user.uid), (snap) => {
+      if (snap.exists()) {
+        setWallet(snap.data());
+      }
+    }, (e) => handleFirestoreError(e, OperationType.GET, `wallets/${user.uid}`));
+    return () => unsubscribe();
+  }, [user]);
+
+  // Fetch Transactions
+  useEffect(() => {
+    if (!user) return;
+    const q = query(collection(db, 'transactions'), where('userId', '==', user.uid), orderBy('createdAt', 'desc'), limit(10));
+    const unsubscribe = onSnapshot(q, (snap) => {
+      setTransactions(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, (e) => handleFirestoreError(e, OperationType.LIST, 'transactions'));
+    return () => unsubscribe();
+  }, [user]);
+
+  // Seed Data if empty
+  const seedListings = async () => {
+    if (listings.length > 0) return;
+    setLoading(true);
+    try {
+      for (const ml of MOCK_LISTINGS) {
+        await addDoc(collection(db, 'listings'), {
+          ...ml,
+          hostId: 'system-seed',
+          createdAt: new Date().toISOString()
+        });
+      }
+    } catch (e) {
+      console.error("Error seeding", e);
+    } finally {
+      setLoading(false);
+    }
+  };
   const [scrolled, setScrolled] = useState(false);
   const [activeChat, setActiveChat] = useState<any>(null);
   const [messages, setMessages] = useState<any[]>([
@@ -199,17 +266,45 @@ export default function HomeView() {
   }, []);
 
   // Release Fund Logic
-  const handleReleaseFunds = async (bookingId: string) => {
+  const handleReleaseFunds = async (booking: any) => {
+    if (!user) return;
     setLoading(true);
     try {
-      const bRef = doc(db, 'bookings', bookingId);
+      const bRef = doc(db, 'bookings', booking.id);
       await updateDoc(bRef, {
         status: 'completed',
         cautionStatus: 'released'
       });
+
+      // Update Guest Wallet: Deduct from Escrow (simulating completion)
+      const guestWalletRef = doc(db, 'wallets', user.uid);
+      await updateDoc(guestWalletRef, {
+        escrow: increment(-booking.totalPrice),
+        updatedAt: new Date().toISOString()
+      });
+
+      // Create Release Transaction
+      await addDoc(collection(db, 'transactions'), {
+        userId: user.uid,
+        bookingId: booking.id,
+        amount: booking.totalPrice,
+        type: 'escrow_release',
+        status: 'completed',
+        description: `Libération Sira-Djou pour ${booking.listingTitle}`,
+        createdAt: new Date().toISOString(),
+      });
+
+      // ISI: Notify Host about the release
+      await addNotification(
+        booking.hostId,
+        'Paiement Reçu !',
+        `Les fonds pour "${booking.listingTitle}" ont été libérés dans votre portefeuille.`,
+        'system'
+      );
+
       fetchBookings();
     } catch (e) {
-      handleFirestoreError(e, OperationType.UPDATE, `bookings/${bookingId}`);
+      handleFirestoreError(e, OperationType.UPDATE, `bookings/${booking.id}`);
     } finally {
       setLoading(false);
     }
@@ -302,9 +397,60 @@ export default function HomeView() {
     }
   };
 
-  const handleBooking = async (method: 'wave' | 'orange_money' | 'moov') => {
-    if (!user) return signIn();
+  // Real-time Notifications Listener
+  useEffect(() => {
+    if (!user) return;
+    const q = query(
+      collection(db, 'notifications'), 
+      where('userId', '==', user.uid),
+      orderBy('createdAt', 'desc'),
+      limit(20)
+    );
+    const unsubscribe = onSnapshot(q, (snap) => {
+      setNotifications(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, (e) => handleFirestoreError(e, OperationType.LIST, 'notifications'));
+    return () => unsubscribe();
+  }, [user]);
+
+  const handlePhoneSignIn = async () => {
+    if (!phoneNumber) return;
     setLoading(true);
+    setAuthError('');
+    try {
+      const result = await signInWithPhone(phoneNumber, 'recaptcha-container');
+      setConfirmationResult(result);
+      setOtpStep('code');
+    } catch (e: any) {
+      setAuthError(e.message || 'Erreur lors de l\'envoi du SMS');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleVerifyOtp = async () => {
+    if (!verificationCode || !confirmationResult) return;
+    setLoading(true);
+    setAuthError('');
+    try {
+      await verifyCode(confirmationResult, verificationCode);
+      setShowLoginModal(false);
+      setConfirmationResult(null);
+      setOtpStep('phone');
+    } catch (e: any) {
+      setAuthError('Code invalide. Veuillez réessayer.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleBooking = async (method: 'wave' | 'orange_money' | 'moov' | 'paydunya') => {
+    if (!user) {
+      setShowLoginModal(true);
+      return;
+    }
+    setLoading(true);
+    
+    let step = 'bookings';
     try {
       const nights = (dateRange.start && dateRange.end) ? (dateRange.end - dateRange.start) : 1;
       const servicesPrice = selectedServices.reduce((acc, s) => acc + (ADD_ONS.find(a => a.id === s)?.price || 0), 0);
@@ -317,32 +463,80 @@ export default function HomeView() {
         guestId: user.uid,
         startDate: `2026-05-${dateRange.start}`,
         endDate: `2026-05-${dateRange.end}`,
-        status: 'paid_escrow',
+        status: 'pending_payment',
         checkInStatus: 'pending',
         totalPrice,
         nights,
         services: selectedServices,
         cautionAmount: selectedListing.cautionAmount,
-        cautionStatus: 'blocked',
+        cautionStatus: 'pending',
         paymentMethod: method,
         createdAt: new Date().toISOString(),
       };
-      await addDoc(collection(db, 'bookings'), bookingData);
-      
+
+      const bookingRef = await addDoc(collection(db, 'bookings'), bookingData);
+
+      if (method === 'paydunya') {
+        step = 'paydunya_api';
+        const pdResponse = await fetch('/api/paydunya/checkout', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            amount: totalPrice,
+            description: `Réservation Awder : ${selectedListing.title}`,
+            bookingId: bookingRef.id,
+            guestName: user.displayName || 'Voyageur Awder'
+          })
+        });
+        
+        const pdData = await pdResponse.json();
+        if (pdData.success) {
+          window.location.href = pdData.url;
+          return;
+        } else {
+          throw new Error(pdData.error || 'Erreur PayDunya');
+        }
+      }
+
+      // Default flow for others (mocked for now as before)
+      step = 'transactions';
+      // ISI: Create Transaction for Escrow
+      await addDoc(collection(db, 'transactions'), {
+        userId: user.uid,
+        bookingId: bookingRef.id,
+        amount: totalPrice,
+        type: 'payment',
+        status: 'completed',
+        paymentMethod: method,
+        description: `Paiement pour ${selectedListing.title} (Sira-Djou)`,
+        createdAt: new Date().toISOString(),
+      });
+
+      step = 'wallets';
+      // Update Wallet Escrow (In a real app, this should be a cloud function/atomic)
+      const walletRef = doc(db, 'wallets', user.uid);
+      await setDoc(walletRef, {
+        escrow: increment(totalPrice),
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+
+      step = 'notifications';
       // Trigger notification for host
-      await addNotification(
-        'mock-host-id', // In real app, listing.hostId
-        'Nouvelle Réservation !',
-        `Un voyageur a réservé "${selectedListing.title}"`,
-        'booking_request'
-      );
+      await addDoc(collection(db, 'notifications'), {
+        userId: 'mock-host-id',
+        title: 'Nouvelle Réservation !',
+        message: `Un voyageur a réservé "${selectedListing.title}"`,
+        type: 'booking_request',
+        read: false,
+        createdAt: new Date().toISOString()
+      });
 
       setShowPayment(false);
       setSelectedListing(null);
       setActiveTab('bookings');
       fetchBookings();
     } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, 'bookings');
+      handleFirestoreError(error, OperationType.CREATE, step);
     } finally {
       setLoading(false);
     }
@@ -407,13 +601,23 @@ export default function HomeView() {
               <button className="text-xs font-bold text-awder-ocre underline decoration-awder-ocre/30 underline-offset-8">Voir tout</button>
             </div>
             <div className="grid grid-cols-1 gap-8">
-              {MOCK_LISTINGS.map((listing) => (
+              {listings.length > 0 ? listings.map((listing) => (
                 <ListingCard 
                   key={listing.id} 
                   listing={listing as any} 
                   onClick={() => setSelectedListing(listing)}
                 />
-              ))}
+              )) : (
+                <div className="py-20 text-center space-y-4">
+                  <p className="text-slate-400 font-bold">Aucune annonce disponible</p>
+                  <button 
+                    onClick={seedListings}
+                    className="px-6 py-2 bg-awder-ocre text-white rounded-full font-black text-xs uppercase"
+                  >
+                    Initialiser le système
+                  </button>
+                </div>
+              )}
             </div>
           </div>
 
@@ -518,8 +722,8 @@ export default function HomeView() {
                 </div>
                 <div className="p-8 bg-white border border-slate-100 rounded-[40px] shadow-sm">
                    <div className="grid grid-cols-7 gap-2 text-center">
-                     {['L', 'M', 'M', 'J', 'V', 'S', 'D'].map(d => (
-                       <span key={d} className="text-[8px] font-black text-slate-300 uppercase">{d}</span>
+                     {['L', 'M', 'M', 'J', 'V', 'S', 'D'].map((d, i) => (
+                       <span key={`listing-day-${d}-${i}`} className="text-[8px] font-black text-slate-300 uppercase">{d}</span>
                      ))}
                      {Array.from({ length: 31 }).map((_, i) => {
                        const day = i + 1;
@@ -688,52 +892,60 @@ export default function HomeView() {
             animate={{ y: 0 }}
             className="w-full max-w-md bg-white rounded-t-[60px] p-12 space-y-10"
           >
-            <div className="space-y-3 text-center">
-              <div className="w-16 h-1 w-16 bg-slate-100 rounded-full mx-auto mb-6"></div>
-              <h3 className="text-3xl font-black text-awder-brun tracking-tighter">Paiement Sécurisé</h3>
-              <p className="text-sm text-slate-400 font-bold leading-relaxed px-4">Sélectionnez votre moyen de paiement local.</p>
-            </div>
-
-            <div className="space-y-4">
-              <PaymentButton 
-                method="wave" 
-                label="Wave Mobile Money" 
-                color="bg-[#40BCFF]" 
-                icon={<Smartphone className="w-6 h-6" />}
-                loading={loading}
-                onClick={() => handleBooking('wave')}
-              />
-              <PaymentButton 
-                method="orange_money" 
-                label="Orange Money" 
-                color="bg-[#FF6600]" 
-                icon={<Wallet className="w-6 h-6" />}
-                loading={loading}
-                onClick={() => handleBooking('orange_money')}
-              />
-              <PaymentButton 
-                method="moov" 
-                label="Moov Money" 
-                color="bg-[#004B93]" 
-                icon={<CreditCard className="w-6 h-6" />}
-                loading={loading}
-                onClick={() => handleBooking('moov')}
-              />
-            </div>
-
-            <button 
-              onClick={() => setShowPayment(false)}
-              className="w-full py-2 text-slate-400 font-black uppercase text-[10px] tracking-[0.3em] hover:text-awder-brun transition-colors"
-              disabled={loading}
-            >
-              Plus tard
-            </button>
-            
-            {loading && (
-              <div className="flex flex-col items-center gap-4 py-4">
-                <div className="w-12 h-12 border-4 border-awder-ocre border-t-transparent rounded-full animate-spin"></div>
-                <p className="text-[10px] font-black text-awder-ocre uppercase tracking-[0.4em] animate-pulse">Sira-Djou en cours...</p>
+            {loading ? (
+              <div className="py-20 flex flex-col items-center justify-center space-y-8 text-center animate-in fade-in zoom-in duration-500">
+                <div className="relative">
+                  <div className="w-24 h-24 border-8 border-slate-100 border-t-awder-ocre rounded-full animate-spin"></div>
+                  <Smartphone className="absolute inset-0 m-auto w-8 h-8 text-awder-ocre animate-pulse" />
+                </div>
+                <div className="space-y-2">
+                  <h3 className="text-2xl font-black text-awder-brun leading-tight">Validation en cours</h3>
+                  <p className="text-sm font-bold text-slate-400 uppercase tracking-widest animate-pulse">Sira-Djou vérifie votre transaction local...</p>
+                </div>
               </div>
+            ) : (
+              <>
+                <div className="space-y-3 text-center">
+                  <div className="w-16 h-1 bg-slate-100 rounded-full mx-auto mb-6"></div>
+                  <h3 className="text-3xl font-black text-awder-brun tracking-tighter">Paiement Sécurisé</h3>
+                  <p className="text-sm text-slate-400 font-bold leading-relaxed px-4">Sélectionnez votre moyen de paiement local.</p>
+                </div>
+
+                <div className="space-y-4">
+                  <PaymentButton 
+                    method="wave" 
+                    label="Wave Mobile Money" 
+                    color="bg-[#40BCFF]" 
+                    icon={<Smartphone className="w-6 h-6" />}
+                    loading={loading}
+                    onClick={() => handleBooking('wave')}
+                  />
+                  <PaymentButton 
+                    method="orange_money" 
+                    label="Orange Money" 
+                    color="bg-[#FF6600]" 
+                    icon={<Wallet className="w-6 h-6" />}
+                    loading={loading}
+                    onClick={() => handleBooking('orange_money')}
+                  />
+                  <PaymentButton 
+                    method="moov" 
+                    label="Moov Money" 
+                    color="bg-[#004B93]" 
+                    icon={<CreditCard className="w-6 h-6" />}
+                    loading={loading}
+                    onClick={() => handleBooking('moov')}
+                  />
+                </div>
+
+                <button 
+                  onClick={() => setShowPayment(false)}
+                  className="w-full py-2 text-slate-400 font-black uppercase text-[10px] tracking-[0.3em] hover:text-awder-brun transition-colors"
+                  disabled={loading}
+                >
+                  Annuler la transaction
+                </button>
+              </>
             )}
           </motion.div>
         </div>
@@ -742,6 +954,8 @@ export default function HomeView() {
       {activeTab === 'home' && userMode === 'hote' && (
         <HostDashboard 
           profile={profile} 
+          wallet={wallet}
+          transactions={transactions}
           notifications={notifications}
           onShowNotifications={() => setShowNotifications(true)}
           onShowSupport={() => setShowSupport(true)}
@@ -896,7 +1110,7 @@ export default function HomeView() {
                 </div>
 
                 <div className="flex gap-2">
-                  {booking.status === 'paid_escrow' && booking.checkInStatus !== 'checked_in' && (
+                  {booking.status === 'paid_escrow' && booking.checkInStatus !== 'checked_in' && booking.checkInStatus !== 'checked_out' && (
                     <button 
                       onClick={() => {
                         const bRef = doc(db, 'bookings', booking.id);
@@ -932,6 +1146,16 @@ export default function HomeView() {
                     >
                       <Upload className="w-4 h-4" />
                       Check-out
+                    </button>
+                  )}
+                  {booking.checkInStatus === 'checked_out' && booking.status === 'paid_escrow' && (
+                    <button 
+                      onClick={() => handleReleaseFunds(booking)}
+                      disabled={loading}
+                      className="flex-1 py-4 bg-awder-gold text-awder-brun rounded-[24px] font-black flex items-center justify-center gap-2 shadow-lg shadow-awder-gold/20 active:scale-95 transition-all text-xs uppercase tracking-widest animate-pulse"
+                    >
+                      <CheckCircle2 className="w-4 h-4" />
+                      Libérer les fonds
                     </button>
                   )}
                 </div>
@@ -1217,9 +1441,127 @@ export default function HomeView() {
             />
           </div>
 
-          <button className="w-full py-5 bg-red-50 text-red-500 rounded-[32px] font-black border border-red-100 active:scale-95 transition-all">
+          <button 
+            onClick={logout}
+            className="w-full py-5 bg-red-50 text-red-500 rounded-[32px] font-black border border-red-100 active:scale-95 transition-all text-sm uppercase tracking-widest"
+          >
             Déconnexion
           </button>
+        </div>
+      )}
+
+      {/* Login Modal */}
+      {showLoginModal && (
+        <div className="fixed inset-0 z-[400] bg-awder-brun/95 backdrop-blur-xl flex items-center justify-center p-6">
+          <motion.div 
+            initial={{ scale: 0.9, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            className="w-full max-w-md bg-white rounded-[50px] overflow-hidden shadow-2xl relative"
+          >
+            <button 
+              onClick={() => {
+                setShowLoginModal(false);
+                setOtpStep('phone');
+                setAuthError('');
+              }}
+              className="absolute top-8 right-8 p-3 bg-slate-50 text-slate-400 rounded-2xl hover:bg-slate-100 transition-all"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            
+            <div className="p-10 space-y-10">
+              <div className="text-center space-y-4">
+                <div className="w-20 h-20 bg-awder-ocre/10 rounded-full flex items-center justify-center mx-auto text-awder-ocre scale-110">
+                  <User className="w-10 h-10" />
+                </div>
+                <div className="space-y-2">
+                  <h3 className="text-3xl font-black text-awder-brun tracking-tighter leading-none">Bienvenue chez Awder</h3>
+                  <p className="text-sm font-bold text-slate-400 tracking-tight italic">Connectez-vous pour continuer l&apos;aventure.</p>
+                </div>
+              </div>
+
+              {authError && (
+                <div className="p-4 bg-red-50 border border-red-100 rounded-2xl text-red-500 text-xs font-bold text-center">
+                  {authError}
+                </div>
+              )}
+
+              <div className="space-y-6">
+                {otpStep === 'phone' ? (
+                  <div className="space-y-4">
+                    <p className="text-[10px] font-black text-awder-gold uppercase tracking-[0.4em] text-center">Connexion par Téléphone</p>
+                    <div className="relative group">
+                      <Phone className="absolute left-6 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-300 group-focus-within:text-awder-ocre transition-colors" />
+                      <input 
+                        type="tel"
+                        placeholder="+223"
+                        value={phoneNumber}
+                        onChange={(e) => setPhoneNumber(e.target.value)}
+                        className="w-full p-6 pl-16 bg-slate-50 border border-slate-100 rounded-[32px] outline-none focus:border-awder-gold font-black text-awder-brun transition-all"
+                      />
+                    </div>
+                    <button 
+                      onClick={handlePhoneSignIn}
+                      disabled={loading || !phoneNumber}
+                      className="w-full py-6 bg-awder-ocre text-white rounded-[32px] font-black text-sm uppercase tracking-[0.2em] shadow-xl shadow-awder-ocre/20 active:scale-95 transition-all disabled:opacity-50"
+                    >
+                      {loading ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin mx-auto"></div> : 'Recevoir le Code SMS'}
+                    </button>
+                    <div id="recaptcha-container" className="flex justify-center mt-2"></div>
+                  </div>
+                ) : (
+                  <div className="space-y-6">
+                    <p className="text-[10px] font-black text-awder-gold uppercase tracking-[0.4em] text-center">Entrez le Code Reçu</p>
+                    <div className="relative group">
+                      <ShieldCheck className="absolute left-6 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-300 group-focus-within:text-awder-ocre transition-colors" />
+                      <input 
+                        type="text"
+                        placeholder="000000"
+                        value={verificationCode}
+                        onChange={(e) => setVerificationCode(e.target.value)}
+                        className="w-full p-6 pl-16 bg-slate-50 border border-slate-100 rounded-[32px] outline-none focus:border-awder-gold font-black text-awder-brun tracking-[1em] transition-all"
+                        maxLength={6}
+                      />
+                    </div>
+                    <button 
+                      onClick={handleVerifyOtp}
+                      disabled={loading || verificationCode.length < 6}
+                      className="w-full py-6 bg-awder-ocre text-white rounded-[32px] font-black text-sm uppercase tracking-[0.2em] shadow-xl shadow-awder-ocre/20 active:scale-95 transition-all disabled:opacity-50"
+                    >
+                      {loading ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin mx-auto"></div> : 'Vérifier & Se Connecter'}
+                    </button>
+                    <button 
+                      onClick={() => setOtpStep('phone')}
+                      className="w-full py-2 text-slate-400 font-bold text-[10px] uppercase tracking-widest hover:text-awder-ocre transition-colors"
+                    >
+                      Modifier le numéro
+                    </button>
+                  </div>
+                )}
+
+                <div className="relative flex items-center justify-center py-4">
+                  <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-slate-100"></div></div>
+                  <span className="relative px-6 bg-white text-[9px] font-black text-slate-300 uppercase tracking-[0.4em]">Ou via Google</span>
+                </div>
+
+                <button 
+                  onClick={async () => {
+                    setLoading(true);
+                    try { await signIn(); setShowLoginModal(false); } catch(e) {} finally { setLoading(false); }
+                  }}
+                  disabled={loading}
+                  className="w-full py-6 bg-white border border-slate-100 text-awder-brun rounded-[32px] font-black text-sm flex items-center justify-center gap-4 hover:border-awder-gold shadow-sm active:scale-95 transition-all"
+                >
+                  <Image src="https://www.google.com/favicon.ico" alt="Google" width={18} height={18} />
+                  Continuer avec Google
+                </button>
+              </div>
+
+              <p className="text-[9px] text-center text-slate-300 font-bold uppercase tracking-widest leading-relaxed px-6">
+                En continuant, vous acceptez nos conditions d&apos;utilisation et notre politique de confidentialité Sira-Djou.
+              </p>
+            </div>
+          </motion.div>
         </div>
       )}
     </MobileLayout>
@@ -1244,7 +1586,7 @@ const PaymentButton = ({ method, label, color, icon, loading, onClick }: any) =>
   </button>
 );
 
-const HostDashboard = ({ profile, onAddListing, onViewBooking, onSwitchMode, activeSubTab, onSubTabChange, notifications, onShowNotifications, onShowSupport }: any) => {
+const HostDashboard = ({ profile, onAddListing, onViewBooking, onSwitchMode, activeSubTab, onSubTabChange, notifications, onShowNotifications, onShowSupport, wallet, transactions }: any) => {
   const unreadCount = notifications?.filter((n: any) => !n.read).length || 0;
 
   return (
@@ -1273,12 +1615,78 @@ const HostDashboard = ({ profile, onAddListing, onViewBooking, onSwitchMode, act
       {/* Sub-tabs Navigation */}
       <div className="flex gap-2 overflow-x-auto pb-2 -mx-2 px-2 no-scrollbar">
         <HostTabButton icon={<Activity className="w-4 h-4" />} label="Aperçu" active={activeSubTab === 'overview'} onClick={() => onSubTabChange('overview')} />
+        <HostTabButton icon={<Wallet className="w-4 h-4" />} label="Finance" active={activeSubTab === 'finance'} onClick={() => onSubTabChange('finance')} />
         <HostTabButton icon={<Home className="w-4 h-4" />} label="Annonces" active={activeSubTab === 'listings'} onClick={() => onSubTabChange('listings')} />
         <HostTabButton icon={<Calendar className="w-4 h-4" />} label="Calendrier" active={activeSubTab === 'calendar'} onClick={() => onSubTabChange('calendar')} />
         <HostTabButton icon={<Settings className="w-4 h-4" />} label="Paramètres" active={activeSubTab === 'settings'} onClick={() => onSubTabChange('settings')} />
       </div>
 
-      {activeSubTab === 'settings' && (
+      {activeSubTab === 'finance' && (
+        <motion.div 
+          initial={{ opacity: 0, x: 20 }}
+          animate={{ opacity: 1, x: 0 }}
+          className="space-y-8"
+        >
+          <div className="p-10 bg-awder-brun rounded-[50px] text-white space-y-6 shadow-2xl relative overflow-hidden">
+             <div className="absolute top-0 right-0 w-64 h-64 bg-awder-gold/10 rounded-full -mr-32 -mt-32 blur-3xl"></div>
+             <div className="space-y-1">
+               <p className="text-[10px] font-black text-white/40 uppercase tracking-[0.3em]">Solde Disponible</p>
+               <p className="text-4xl font-black">{formatPrice(wallet?.balance || 0)} F</p>
+             </div>
+             <div className="flex gap-3">
+               <button className="flex-1 py-4 bg-awder-gold text-awder-brun rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg shadow-awder-gold/20 active:scale-95 transition-all">
+                 Retirer les fonds
+               </button>
+             </div>
+          </div>
+
+          <div className="space-y-6">
+             <div className="flex justify-between items-center px-2">
+               <h3 className="font-black text-awder-brun text-lg">Transactions Récentes</h3>
+               <div className="flex items-center gap-1 text-[10px] font-black text-slate-400">
+                 <ArrowUpRight className="w-3 h-3" />
+                 <span>TRX ID VERIFIED</span>
+               </div>
+             </div>
+             <div className="space-y-3">
+               {transactions.length > 0 ? transactions.map((tx: any) => (
+                 <div key={tx.id} className="p-6 bg-white border border-slate-50 rounded-[32px] flex items-center justify-between group hover:border-awder-ocre/20 transition-all">
+                   <div className="flex items-center gap-4">
+                      <div className={`p-4 rounded-2xl ${
+                        tx.type === 'payment' ? 'bg-green-50 text-green-500' : 
+                        tx.type === 'escrow_release' ? 'bg-awder-gold/10 text-awder-gold' : 
+                        'bg-slate-50 text-slate-400'
+                      }`}>
+                         {tx.type === 'payment' ? <ArrowUpRight className="w-5 h-5" /> : 
+                          tx.type === 'escrow_release' ? <ShieldCheck className="w-5 h-5" /> :
+                          <ArrowRight className="w-5 h-5" />}
+                      </div>
+                      <div className="space-y-0.5">
+                         <p className="font-black text-awder-brun text-sm">{tx.description}</p>
+                         <p className="text-[10px] text-slate-300 font-bold uppercase tracking-widest">{format(new Date(tx.createdAt), 'dd MMM yyyy, HH:mm')}</p>
+                      </div>
+                   </div>
+                   <div className="text-right">
+                      <p className={`font-black text-sm ${tx.type === 'payment' ? 'text-green-500' : 'text-awder-brun'}`}>
+                        {tx.type === 'payment' ? '+' : ''}{formatPrice(tx.amount)} F
+                      </p>
+                      <p className="text-[8px] font-black text-slate-300 uppercase tracking-widest">{tx.status}</p>
+                   </div>
+                 </div>
+               )) : (
+                 <div className="py-20 text-center space-y-4">
+                    <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mx-auto text-slate-200">
+                      <Activity className="w-10 h-10" />
+                    </div>
+                    <p className="text-slate-400 font-black text-xs uppercase tracking-widest">Aucune transaction finance</p>
+                 </div>
+               )}
+             </div>
+          </div>
+        </motion.div>
+      )}
+
+      {activeSubTab === 'overview' && (
         <div className="space-y-6">
           <div className="p-8 bg-white border border-slate-100 rounded-[40px] shadow-sm space-y-6">
             <h3 className="font-black text-awder-brun text-xl tracking-tight">Configuration Hôte</h3>
@@ -1326,10 +1734,10 @@ const HostDashboard = ({ profile, onAddListing, onViewBooking, onSwitchMode, act
             <div className="p-8 bg-awder-ocre rounded-[40px] space-y-2 shadow-2xl shadow-awder-ocre/20 text-white relative overflow-hidden group">
               <div className="absolute top-0 right-0 w-24 h-24 bg-white/10 rounded-full -mr-12 -mt-12 blur-xl group-hover:scale-150 transition-transform"></div>
               <p className="text-[10px] font-black text-white/60 uppercase tracking-widest uppercase">Mes Gains Awder</p>
-              <p className="text-2xl font-black">{formatPrice(profile?.totalGains || 450000)} F</p>
+              <p className="text-2xl font-black">{formatPrice(wallet?.balance || 0)} F</p>
               <div className="flex items-center gap-1 text-white/80 font-black text-[10px]">
                 <TrendingUp className="w-3 h-3" />
-                <span>+12% vs Mars</span>
+                <span>En attente (Escrow): {formatPrice(wallet?.escrow || 0)} F</span>
               </div>
             </div>
             <div className="p-8 bg-white border border-slate-100 rounded-[40px] space-y-2 shadow-sm relative overflow-hidden group">
@@ -1422,8 +1830,8 @@ const HostDashboard = ({ profile, onAddListing, onViewBooking, onSwitchMode, act
               <Info className="w-5 h-5 text-slate-300" />
             </div>
             <div className="grid grid-cols-7 gap-2 text-center">
-              {['L', 'M', 'M', 'J', 'V', 'S', 'D'].map(d => (
-                <span key={d} className="text-[10px] font-black text-slate-300 uppercase">{d}</span>
+              {['L', 'M', 'M', 'J', 'V', 'S', 'D'].map((d, i) => (
+                <span key={`host-calendar-day-${d}-${i}`} className="text-[10px] font-black text-slate-300 uppercase">{d}</span>
               ))}
               {Array.from({ length: 31 }).map((_, i) => (
                 <button 
@@ -1671,8 +2079,8 @@ const WalletOverlay = ({ onClose }: { onClose: () => void }) => (
             { label: 'Orange Money', color: 'bg-orange-500', balance: '45k F' },
             { label: 'Moov Money', color: 'bg-blue-600', balance: '12k F' },
             { label: 'Wave', color: 'bg-sky-400', balance: '101k F' }
-          ].map(acc => (
-            <div key={acc.label} className="p-6 bg-white border border-slate-100 rounded-[32px] flex items-center justify-between">
+          ].map((acc, i) => (
+            <div key={`wallet-acc-${i}`} className="p-6 bg-white border border-slate-100 rounded-[32px] flex items-center justify-between">
               <div className="flex items-center gap-4">
                 <div className={`w-12 h-12 ${acc.color} rounded-2xl`}></div>
                 <div>
@@ -1789,7 +2197,7 @@ const PersonalInfoOverlay = ({ profile, onClose }: { profile: any, onClose: () =
           { label: 'Numéro de Téléphone', value: '+223 70 00 00 00', icon: <Phone className="w-4 h-4" /> },
           { label: 'Bio / Présentation', value: 'Adore voyager et découvrir le Mali.', icon: <FileText className="w-4 h-4" /> }
         ].map((field, i) => (
-          <div key={i} className="p-6 bg-slate-50 rounded-[32px] space-y-2 border border-transparent hover:border-awder- gold transition-all">
+          <div key={`profile-field-${i}`} className="p-6 bg-slate-50 rounded-[32px] space-y-2 border border-transparent hover:border-awder- gold transition-all">
             <div className="flex items-center gap-2 text-awder-ocre">
               {field.icon}
               <p className="text-[10px] font-black uppercase tracking-widest opacity-60">{field.label}</p>
@@ -1878,9 +2286,9 @@ const MessagesView = ({ onSelectChat }: any) => {
       </div>
 
       <div className="space-y-2">
-        {MOCK_CHATS.map((chat) => (
+        {MOCK_CHATS.map((chat, i) => (
           <button 
-            key={chat.id} 
+            key={`chat-list-item-${chat.id}-${i}`} 
             onClick={() => onSelectChat(chat)}
             className="w-full p-6 bg-white border border-slate-100 rounded-[32px] flex items-center gap-5 hover:border-awder-gold transition-all group"
           >
@@ -1947,8 +2355,8 @@ const ChatOverlay = ({ chat, messages, onClose, onSendMessage }: any) => {
           </div>
         </div>
 
-        {messages.map((m: any) => (
-          <div key={m.id} className={`flex ${m.senderId === 'me' ? 'justify-end' : 'justify-start'}`}>
+        {messages.map((m: any, i: number) => (
+          <div key={`chat-msg-${m.id}-${i}`} className={`flex ${m.senderId === 'me' ? 'justify-end' : 'justify-start'}`}>
             <div className={`max-w-[80%] p-5 rounded-[28px] ${
               m.senderId === 'me' 
                 ? 'bg-awder-brun text-white rounded-tr-none shadow-xl shadow-awder-brun/10' 
@@ -2183,7 +2591,7 @@ const AddListingOverlay = ({ onClose, onSuccess }: any) => {
                 </label>
                 
                 {images.map((img, idx) => (
-                  <div key={idx} className="relative aspect-square rounded-[32px] overflow-hidden group">
+                  <div key={`add-listing-img-${idx}`} className="relative aspect-square rounded-[32px] overflow-hidden group">
                     <Image 
                       src={img} 
                       alt="Preview" 

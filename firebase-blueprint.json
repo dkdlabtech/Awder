@@ -115,6 +115,35 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["userId", "title", "message", "type", "read"]
+    },
+    "Wallet": {
+      "title": "Wallet",
+      "description": "User's financial balance and escrowed funds.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "balance": { "type": "number", "description": "Available funds" },
+        "escrow": { "type": "number", "description": "Funds held until booking completion" },
+        "currency": { "type": "string", "default": "XOF" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "balance", "escrow"]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "Record of payments, escrow releases, and withdrawals.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "bookingId": { "type": "string" },
+        "amount": { "type": "number" },
+        "type": { "type": "string", "enum": ["payment", "escrow_release", "withdrawal", "refund"] },
+        "status": { "type": "string", "enum": ["pending", "completed", "failed"] },
+        "paymentMethod": { "type": "string", "enum": ["wave", "orange_money", "moov"] },
+        "description": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "amount", "type", "status", "createdAt"]
     }
   },
   "firestore": {
@@ -141,6 +170,14 @@
     "/notifications/{notificationId}": {
       "schema": "Notification",
       "description": "User notifications"
+    },
+    "/wallets/{userId}": {
+      "schema": "Wallet",
+      "description": "Financial balances"
+    },
+    "/transactions/{transactionId}": {
+      "schema": "Transaction",
+      "description": "Financial history"
     }
   }
 }
