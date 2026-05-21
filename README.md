@@ -1,20 +1,62 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# Livraison 2A — Briques de refonte + Bouton Connexion en home
 
-# Run and deploy your AI Studio app
+## Pourquoi en 2 étapes (2A puis 2B) ?
 
-This contains everything you need to run your app locally.
+Ton `app/page.tsx` fait 3115 lignes. Refondre ça d'un coup = risque énorme de casser quelque chose. On y va en deux étapes pour pouvoir tester et corriger entre temps.
 
-View your app in AI Studio: https://ai.studio/apps/2bb09865-e5b1-44ca-8c73-eaf4dcf87aef
+## Ce que livre la 2A
 
-## Run Locally
+### ✅ Ajout immédiat : bouton "Connexion" en haut de la home
+Plus besoin de cliquer sur une annonce pour se connecter. Le bouton apparaît en haut à droite de la home pour les visiteurs non connectés.
 
-**Prerequisites:**  Node.js
+### ✅ Briques préparées pour la 2B
+- **Hooks réutilisables** : `useListings`, `useBookings`, `useWallet`, `useTransactions`
+- **Composant LoginModal extrait** : sera utilisé partout dans la 2B
+- **Utilitaires** : `firestore-error.ts`, `constants.ts` (ADD_ONS)
 
+Ces briques ne sont pas encore utilisées dans `page.tsx` — elles seront utilisées dans la 2B pour démonter le monolithe en petits morceaux propres.
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+## Installation
+
+```powershell
+cd C:\Users\UPJV\Downloads\Awder
+Expand-Archive -Path ..\awder-refactor.zip -DestinationPath . -Force
+Unblock-File -Path .\install-2a.ps1
+.\install-2a.ps1
+```
+
+Le script :
+- Crée un backup de ton `page.tsx`
+- Ajoute le bouton "Connexion" en haut
+- Installe les hooks et composants partagés
+
+## Test
+
+1. **Ctrl+C** dans `npm run dev`
+2. `npm run dev`
+3. Ouvre `localhost:3000` **en navigation privée** (pour être sûr d'être déconnecté)
+4. En haut à droite, tu verras un bouton orange **"Connexion"**
+5. Clique → modal de connexion s'ouvre
+6. Connecte-toi → bouton disparaît
+
+## La 2B livrera ensuite
+
+- `app/page.tsx` réduit à ~150 lignes (juste la home)
+- `app/listing/[id]/page.tsx` — détail annonce en route propre
+- `app/bookings/page.tsx` — mes réservations
+- `app/profile/page.tsx` — mon profil + déclencheur KYC
+- `app/host/dashboard/page.tsx` — tableau de bord hôte
+- `app/host/listings/new/page.tsx` — créer annonce + déclenchement KYC à la publication
+- `app/messages/page.tsx` — chat
+- Bouton "Connexion" présent sur **toutes les pages publiques**
+
+## Si quelque chose casse
+
+Tu as un backup automatique :
+```powershell
+# Liste les backups
+dir app\page.tsx.backup-*
+
+# Restaurer le plus récent
+Copy-Item (Get-ChildItem app\page.tsx.backup-* | Select-Object -Last 1).FullName app\page.tsx -Force
+```
