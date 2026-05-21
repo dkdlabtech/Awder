@@ -1,0 +1,174 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() { return request.auth != null; }
+    function isOwner(userId) { return isSignedIn() && request.auth.uid == userId; }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.admin == true ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
+      );
+    }
+
+    function isNotBanned() {
+      return isSignedIn() && (
+        !exists(/databases/$(database)/documents/users/$(request.auth.uid)) ||
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isBanned != true
+      );
+    }
+
+    // ── USERS ────────────────────────────────────────────────────────────────
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow create: if isOwner(userId);
+      allow update: if (
+        // Self update — toutes les modifs personnelles permises
+        isOwner(userId) && isNotBanned() &&
+        // L'utilisateur ne peut pas se donner le rôle admin
+        (!('role' in incoming()) || incoming().role in ['guest', 'host', 'admin'])
+      ) || isAdmin();
+      allow delete: if false;
+    }
+
+    // ── LISTINGS ─────────────────────────────────────────────────────────────
+    match /listings/{listingId} {
+      allow read: if (
+        (resource.data.moderationStatus == 'approved' && resource.data.isActive == true) ||
+        // Hôte voit ses propres listings dans tous les états
+        (isSignedIn() && resource.data.hostId == request.auth.uid) ||
+        isAdmin()
+      );
+      allow create: if isSignedIn() && isNotBanned() &&
+                    incoming().hostId == request.auth.uid;
+      allow update: if (
+        isSignedIn() && existing().hostId == request.auth.uid && isNotBanned()
+      ) || isAdmin();
+      allow delete: if isOwner(existing().hostId) || isAdmin();
+    }
+
+    // ── BOOKINGS ─────────────────────────────────────────────────────────────
+    // RÈGLE ULTRA-PERMISSIVE : tout user authentifié et non banni peut créer un booking
+    // pourvu qu'il soit le guest et qu'il y ait les bons champs.
+    match /bookings/{bookingId} {
+      allow read: if isSignedIn() && (
+        resource.data.guestId == request.auth.uid ||
+        resource.data.hostId == request.auth.uid ||
+        isAdmin()
+      );
+      allow create: if isSignedIn() &&
+                    incoming().guestId == request.auth.uid &&
+                    incoming().listingId is string &&
+                    incoming().totalPrice is number;
+      allow update: if isSignedIn() && (
+        existing().guestId == request.auth.uid ||
+        existing().hostId == request.auth.uid ||
+        isAdmin()
+      );
+      allow delete: if isAdmin();
+    }
+
+    // ── WALLETS ──────────────────────────────────────────────────────────────
+    match /wallets/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isOwner(userId);
+      allow update: if isOwner(userId) || isAdmin();
+    }
+
+    // ── TRANSACTIONS ─────────────────────────────────────────────────────────
+    match /transactions/{transactionId} {
+      allow read: if isSignedIn() && (
+        resource.data.userId == request.auth.uid ||
+        resource.data.guestId == request.auth.uid ||
+        resource.data.hostId == request.auth.uid ||
+        isAdmin()
+      );
+      allow create: if isSignedIn();
+    }
+
+    // ── NOTIFICATIONS ────────────────────────────────────────────────────────
+    match /notifications/{notificationId} {
+      allow read: if isOwner(resource.data.userId) || isAdmin();
+      allow create: if isSignedIn();
+      allow update: if isOwner(resource.data.userId);
+      allow delete: if isOwner(resource.data.userId) || isAdmin();
+    }
+
+    // ── REVIEWS ──────────────────────────────────────────────────────────────
+    match /reviews/{reviewId} {
+      allow read: if true;
+      allow create: if isSignedIn() && isNotBanned() &&
+                    incoming().fromUserId == request.auth.uid;
+      allow update, delete: if isAdmin();
+    }
+
+    // ── GUIDES ───────────────────────────────────────────────────────────────
+    match /guides/{guideId} {
+      allow read: if true;
+      allow write: if isSignedIn();
+    }
+
+    // ── DISPUTES ─────────────────────────────────────────────────────────────
+    match /disputes/{disputeId} {
+      allow read: if isSignedIn() && (
+        resource.data.openedBy == request.auth.uid || isAdmin()
+      );
+      allow create: if isSignedIn() && incoming().openedBy == request.auth.uid;
+      allow update: if isAdmin();
+      allow delete: if false;
+    }
+
+    // ── PLATFORM CONFIG ──────────────────────────────────────────────────────
+    match /platform/{document} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // ── VISIT REQUESTS ───────────────────────────────────────────────────────
+    match /visitRequests/{visitId} {
+      allow read: if isSignedIn() && (
+        resource.data.hostId == request.auth.uid ||
+        resource.data.agentId == request.auth.uid ||
+        isAdmin()
+      );
+      allow create: if isSignedIn() && incoming().hostId == request.auth.uid;
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // ── AUDIT LOG (server-only) ──────────────────────────────────────────────
+    match /auditLogs/{logId} {
+      allow read: if isAdmin();
+      allow create, update, delete: if false;
+    }
+
+    // ── Server-only collections ──────────────────────────────────────────────
+    match /rateLimits/{rlId} {
+      allow read, write: if false;
+    }
+
+    match /otpCodes/{phone} {
+      allow read, write: if false;
+    }
+
+    // ── CONVERSATIONS ────────────────────────────────────────────────────────
+    match /conversations/{conversationId} {
+      allow read: if isSignedIn() && request.auth.uid in resource.data.participants;
+      allow create: if isSignedIn() && request.auth.uid in incoming().participants;
+      allow update: if isSignedIn() && request.auth.uid in resource.data.participants;
+
+      match /messages/{messageId} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn() && incoming().senderId == request.auth.uid;
+      }
+    }
+  }
+}

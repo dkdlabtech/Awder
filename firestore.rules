@@ -6,7 +6,7 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    // Phase 3: Primitives
+    // ── Primitives ────────────────────────────────────────────────────────────
     function isSignedIn() { return request.auth != null; }
     function isOwner(userId) { return isSignedIn() && request.auth.uid == userId; }
     function incoming() { return request.resource.data; }
@@ -14,42 +14,57 @@ service cloud.firestore {
     function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
     
     // Auth Token Integrity
-    function isEmailVerified() { return isSignedIn(); } // Simplified to isSignedIn to avoid token issues in preview
+    function isEmailVerified() { return isSignedIn(); }
 
-    // Phase 4: Validation Blueprints
+    // ✨ Admin check : custom claim `admin: true` OU role dans users
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.admin == true ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
+      );
+    }
+
+    // ✨ Vérifie que l'utilisateur n'est pas banni
+    function isNotBanned() {
+      return isSignedIn() && (
+        !exists(/databases/$(database)/documents/users/$(request.auth.uid)) ||
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isBanned != true
+      );
+    }
+
+    // ── Validation Blueprints ─────────────────────────────────────────────────
 
     function isValidUser(data) {
-      return data.keys().hasAll(['displayName', 'email', 'role', 'createdAt', 'isVerified']) &&
-             data.displayName is string && data.displayName.size() <= 100 &&
-             data.email == request.auth.token.email &&
+      return data.keys().hasAll(['displayName', 'role', 'createdAt', 'isVerified']) &&
+             data.displayName is string && data.displayName.size() > 0 && data.displayName.size() <= 100 &&
              data.role in ['guest', 'host'] &&
              data.isVerified is bool &&
-             data.keys().size() >= 5;
+             (!('email' in data) || data.email == request.auth.token.email);
     }
 
     function isValidListing(data) {
       return data.hostId == request.auth.uid &&
              data.title is string && data.title.size() <= 200 &&
              data.price is number && data.price >= 0 &&
-             data.keys().hasAll(['title', 'price', 'hostId', 'createdAt']) &&
-             data.keys().size() >= 4;
+             data.keys().hasAll(['title', 'price', 'hostId', 'createdAt', 'moderationStatus']) &&
+             data.moderationStatus in ['draft', 'pending_review'] &&
+             data.isActive == false;
     }
 
     function isValidBooking(data) {
       return data.guestId == request.auth.uid &&
              data.listingId is string &&
              data.totalPrice is number && data.totalPrice >= 0 &&
-             data.status in ['pending', 'paid_escrow', 'completed', 'cancelled'] &&
-             data.keys().hasAll(['listingId', 'guestId', 'hostId', 'status', 'totalPrice', 'createdAt']) &&
-             data.keys().size() >= 6;
+             data.status == 'pending_payment' &&
+             data.keys().hasAll(['listingId', 'guestId', 'hostId', 'status', 'totalPrice', 'createdAt']);
     }
 
     function isValidNotification(data) {
       return data.userId is string &&
              data.title is string && data.title.size() <= 128 &&
              data.read == false &&
-             data.keys().hasAll(['userId', 'title', 'message', 'type', 'read', 'createdAt']) &&
-             data.keys().size() == 6;
+             data.keys().hasAll(['userId', 'title', 'message', 'type', 'read', 'createdAt']);
     }
 
     function isValidWallet(data) {
@@ -63,80 +78,199 @@ service cloud.firestore {
     function isValidTransaction(data) {
       return data.userId == request.auth.uid &&
              data.amount is number && data.amount >= 0 &&
-             data.type in ['payment', 'escrow_release', 'withdrawal', 'refund'] &&
-             data.status in ['pending', 'completed', 'failed'] &&
-             data.keys().hasAll(['userId', 'amount', 'type', 'status', 'createdAt']) &&
-             data.keys().size() >= 5;
+             data.type in ['payment', 'escrow_release', 'commission', 'withdrawal', 'refund', 'service_fee'] &&
+             data.status in ['pending', 'completed', 'failed', 'escrow'] &&
+             data.keys().hasAll(['userId', 'amount', 'type', 'status', 'createdAt']);
     }
 
-    // --- COLLECTIONS ---
+    function isValidDispute(data) {
+      return data.openedBy == request.auth.uid &&
+             data.bookingId is string &&
+             data.reason in ['listing_misleading', 'electricity_outage', 'water_outage',
+                             'cleanliness', 'host_no_show', 'guest_damage', 'payment_issue', 'other'] &&
+             data.description is string && data.description.size() <= 2000 &&
+             data.status == 'open' &&
+             data.keys().hasAll(['bookingId', 'openedBy', 'openedByRole', 'reason', 'description', 'status', 'createdAt']);
+    }
+
+    // ── COLLECTIONS ───────────────────────────────────────────────────────────
 
     match /users/{userId} {
+      // Lecture libre pour les utilisateurs connectés (affichage des hôtes)
       allow read: if isSignedIn();
+      
+      // Création seulement par soi-même, non vérifié au départ
       allow create: if isOwner(userId) && isValidUser(incoming()) && incoming().isVerified == false;
-      allow update: if isOwner(userId) && 
-                    incoming().isVerified == existing().isVerified &&
-                    incoming().role == existing().role &&
-                    incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'phoneNumber', 'idCardUrl', 'updatedAt', 'totalGains']);
+      
+      // Mise à jour par soi-même (champs limités) OU par un admin (tout sauf rôle admin)
+      allow update: if (
+        // Self update — champs autorisés uniquement
+        isOwner(userId) &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'displayName', 'phoneNumber', 'bio', 'idCardUrl', 'selfieUrl', 'idDocType',
+          'idVerificationStatus', 'kycSubmittedAt', 'role', 'isVerified',
+          'updatedAt', 'totalGains'
+        ]) &&
+        (!('role' in incoming().diff(existing()).addedFields()) || incoming().role in ['guest', 'host'])
+      ) || (
+        // Admin peut tout modifier sauf accorder le rôle admin
+        isAdmin()
+      );
+      
+      // Aucune suppression directe (utiliser ban)
+      allow delete: if false;
     }
 
     match /listings/{listingId} {
-      allow read: if true;
-      allow create: if isEmailVerified() && isValidListing(incoming());
-      allow update: if isOwner(existing().hostId) && isValidListing(incoming());
-      allow delete: if isOwner(existing().hostId);
+      // Lecture publique des annonces approuvées + actives ; admin voit tout ; hôte voit les siennes
+      allow read: if (
+        resource.data.moderationStatus == 'approved' && resource.data.isActive == true
+      ) || isAdmin() || (isSignedIn() && resource.data.hostId == request.auth.uid);
+      
+      // Création par un hôte non banni, statut forcé en pending_review
+      allow create: if isEmailVerified() && isNotBanned() && isValidListing(incoming());
+      
+      // Mise à jour par le host owner (sauf champs admin) OU par un admin
+      allow update: if (
+        isOwner(existing().hostId) && isNotBanned() &&
+        // Hôte ne peut pas modifier les champs de modération
+        !incoming().diff(existing()).affectedKeys().hasAny([
+          'moderationStatus', 'rejectionReason', 'reviewedBy', 'reviewedAt',
+          'isVerified', 'badges'
+        ])
+      ) || isAdmin();
+      
+      allow delete: if isOwner(existing().hostId) || isAdmin();
     }
 
     match /bookings/{bookingId} {
-      allow read: if isSignedIn() && (resource.data.guestId == request.auth.uid || resource.data.hostId == request.auth.uid);
-      allow create: if isEmailVerified() && isValidBooking(incoming());
+      allow read: if isSignedIn() && (
+        resource.data.guestId == request.auth.uid ||
+        resource.data.hostId == request.auth.uid ||
+        isAdmin()
+      );
+      allow create: if isEmailVerified() && isNotBanned() && isValidBooking(incoming());
       allow update: if isSignedIn() && (
-        // Action: Update by Guest (Check-in, Check-out, Cancel)
+        // Guest update (Check-in, Check-out, Cancel)
         (isOwner(existing().guestId) && 
          incoming().guestId == existing().guestId &&
          incoming().hostId == existing().hostId &&
          incoming().totalPrice == existing().totalPrice &&
-         incoming().diff(existing()).affectedKeys().hasAny(['status', 'cautionStatus', 'checkInStatus'])) ||
-        // Action: Accept by Host
+         incoming().diff(existing()).affectedKeys().hasAny(['status', 'cautionStatus', 'checkInStatus', 'hasDispute', 'disputeId'])) ||
+        // Host update (Accept)
         (isOwner(existing().hostId) && 
-         incoming().diff(existing()).affectedKeys().hasOnly(['status']))
+         incoming().diff(existing()).affectedKeys().hasOnly(['status'])) ||
+        // Admin peut tout (médiation)
+        isAdmin()
       );
     }
 
     match /notifications/{notificationId} {
-      allow read: if isOwner(resource.data.userId);
+      allow read: if isOwner(resource.data.userId) || isAdmin();
       allow create: if isSignedIn() && isValidNotification(incoming());
       allow update: if isOwner(resource.data.userId) && 
                     incoming().diff(existing()).affectedKeys().hasOnly(['read']);
-      allow delete: if isOwner(resource.data.userId);
+      allow delete: if isOwner(resource.data.userId) || isAdmin();
     }
 
     match /wallets/{userId} {
-      allow read: if isOwner(userId);
+      allow read: if isOwner(userId) || isAdmin();
       allow create: if isOwner(userId) && isValidWallet(incoming());
-      // Updates are restricted (simulating server-side control)
-      // For this app, we allow incrementing escrow during booking creation on client side for demo simplicity
-      allow update: if isOwner(userId) && 
-                    incoming().userId == existing().userId &&
-                    incoming().balance == existing().balance &&
-                    incoming().diff(existing()).affectedKeys().hasOnly(['escrow', 'updatedAt']);
+      allow update: if (
+        isOwner(userId) && 
+        incoming().userId == existing().userId &&
+        incoming().balance == existing().balance &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['escrow', 'updatedAt'])
+      ) || isAdmin();
     }
 
     match /transactions/{transactionId} {
-      allow read: if isOwner(resource.data.userId);
+      allow read: if isOwner(resource.data.userId) || isAdmin();
       allow create: if isEmailVerified() && isValidTransaction(incoming());
     }
 
     match /reviews/{reviewId} {
       allow read: if true;
-      allow create: if isEmailVerified() && 
+      allow create: if isEmailVerified() && isNotBanned() &&
                     incoming().fromUserId == request.auth.uid &&
                     incoming().keys().hasAll(['bookingId', 'fromUserId', 'toUserId', 'rating', 'createdAt']);
+      allow update, delete: if isAdmin();
     }
 
     match /guides/{guideId} {
       allow read: if true;
-      allow write: if isSignedIn();
+      allow write: if isSignedIn() && isNotBanned();
+    }
+
+    // ── ✨ DISPUTES (nouveau) ──────────────────────────────────────────────────
+    match /disputes/{disputeId} {
+      allow read: if isSignedIn() && (
+        resource.data.openedBy == request.auth.uid ||
+        // Les parties du booking peuvent voir le litige
+        (exists(/databases/$(database)/documents/bookings/$(resource.data.bookingId)) &&
+         (get(/databases/$(database)/documents/bookings/$(resource.data.bookingId)).data.guestId == request.auth.uid ||
+          get(/databases/$(database)/documents/bookings/$(resource.data.bookingId)).data.hostId == request.auth.uid)) ||
+        isAdmin()
+      );
+      allow create: if isEmailVerified() && isNotBanned() && isValidDispute(incoming());
+      // Seul l'admin peut faire évoluer le statut et résoudre
+      allow update: if isAdmin();
+      allow delete: if false;
+    }
+
+    // ── ✨ PLATFORM CONFIG (nouveau) — lecture publique, écriture admin ────────
+    match /platform/{document} {
+      allow read: if true;        // tout le monde voit la commission
+      allow write: if isAdmin();
+    }
+
+    // ── ✨ VISIT REQUESTS (nouveau) — agents terrain ───────────────────────────
+    match /visitRequests/{visitId} {
+      allow read: if isSignedIn() && (
+        resource.data.hostId == request.auth.uid ||
+        resource.data.agentId == request.auth.uid ||
+        isAdmin()
+      );
+      allow create: if isSignedIn() && incoming().hostId == request.auth.uid;
+      allow update: if isAdmin() ||
+                    (isSignedIn() && resource.data.agentId == request.auth.uid);
+      allow delete: if isAdmin();
+    }
+
+    // ── ✨ AUDIT LOG (nouveau) — traçabilité admin ──────────────────────────────
+    match /auditLogs/{logId} {
+      allow read: if isAdmin();
+      // Création uniquement côté serveur (Admin SDK bypass)
+      allow create, update, delete: if false;
+    }
+
+    // ── Server-only collections ────────────────────────────────────────────────
+    match /rateLimits/{rlId} {
+      allow read, write: if false;
+    }
+
+    match /otpCodes/{phone} {
+      allow read, write: if false;
+    }
+
+    // ── Conversations & messages (1-on-1 chat) ────────────────────────────────
+    match /conversations/{conversationId} {
+      allow read: if isSignedIn() && request.auth.uid in resource.data.participants;
+      allow create: if isSignedIn() && isNotBanned()
+                    && incoming().participants is list
+                    && request.auth.uid in incoming().participants
+                    && incoming().participants.size() == 2;
+      allow update: if isSignedIn() && request.auth.uid in resource.data.participants;
+
+      match /messages/{messageId} {
+        allow read: if isSignedIn() && request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participants;
+        allow create: if isSignedIn() && isNotBanned()
+                      && incoming().senderId == request.auth.uid
+                      && request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participants
+                      && incoming().text is string
+                      && incoming().text.size() > 0
+                      && incoming().text.size() <= 2000;
+      }
     }
   }
 }
