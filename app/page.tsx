@@ -2,9 +2,9 @@
 
 import React, { useState, useEffect } from 'react';
 import { MobileLayout } from '@/components/mobile-layout';
-import { SearchFilters, type SearchFiltersValue } from '@/components/search-filters';
+import { SearchFilters } from '@/components/search-filters';
 import { ListingCard } from '@/components/listing-card';
-import { useAuth, authErrorToFrench } from '@/hooks/use-auth';
+import { useAuth } from '@/hooks/use-auth';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   ChevronLeft, 
@@ -66,12 +66,10 @@ import {
   serverTimestamp
 } from 'firebase/firestore';
 import { db, auth } from '@/lib/firebase';
-import { uploadListingImages, uploadUserImage } from '@/lib/upload';
-import { callBookingAction } from '@/lib/booking-actions';
-import { ensureConversation, listenToConversations, listenToMessages, sendChatMessage, type Conversation, type ChatMessage } from '@/lib/chat';
 import { format } from 'date-fns';
 import Image from 'next/image';
 import { formatPrice } from '@/lib/utils';
+import { ConfirmationResult } from 'firebase/auth';
 
 enum OperationType {
   CREATE = 'create',
@@ -163,28 +161,18 @@ const MOCK_LISTINGS = [
   }
 ];
 
-function calculateGarantieSiradjou(prixNuit: number, nuits: number): number {
-  const total = prixNuit * (nuits || 1);
-  return Math.min(Math.round(total * 0.20), 50000);
-}
-
 export default function HomeView() {
-  const { user, signUpWithEmail, signInWithEmail, sendWhatsAppOtp, verifyWhatsAppOtp, logout, profile } = useAuth();
+  const { user, signIn, signInWithPhone, verifyCode, logout, profile } = useAuth();
   const [activeTab, setActiveTab] = useState<'home' | 'bookings' | 'profile' | 'messages'>('home');
   const [userMode, setUserMode] = useState<'voyageur' | 'hote'>('voyageur');
 
-  // Auth Modal State
+  // OTP State
   const [showLoginModal, setShowLoginModal] = useState(false);
-  const [authTab, setAuthTab] = useState<'email' | 'whatsapp'>('whatsapp');
-  const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin');
-  const [authStep, setAuthStep] = useState<'form' | 'otp'>('form');
-  const [authEmail, setAuthEmail] = useState('');
-  const [authPassword, setAuthPassword] = useState('');
-  const [authDisplayName, setAuthDisplayName] = useState('');
-  const [authPhone, setAuthPhone] = useState('');
-  const [authOtp, setAuthOtp] = useState('');
+  const [phoneNumber, setPhoneNumber] = useState('');
+  const [verificationCode, setVerificationCode] = useState('');
+  const [confirmationResult, setConfirmationResult] = useState<ConfirmationResult | null>(null);
+  const [otpStep, setOtpStep] = useState<'phone' | 'code'>('phone');
   const [authError, setAuthError] = useState('');
-  const [devCodeHint, setDevCodeHint] = useState('');
 
   // Sync userMode with profile role
   React.useEffect(() => {
@@ -198,39 +186,14 @@ export default function HomeView() {
   const [showPayment, setShowPayment] = useState(false);
   const [loading, setLoading] = useState(false);
   const [listings, setListings] = useState<any[]>([]);
-  const [filters, setFilters] = useState<SearchFiltersValue>({ text: '', category: 'all' });
-  const filteredListings = React.useMemo(() => {
-    const q = filters.text.trim().toLowerCase();
-    return listings.filter((l) => {
-      // Category filter
-      if (filters.category === 'detente' && l.type !== 'accommodation') return false;
-      if ((filters.category === 'events' || filters.category === 'business') && l.type !== 'event') return false;
-      // Text filter (title, city, neighborhood, address)
-      if (q) {
-        const hay = [
-          l.title,
-          l.location?.city,
-          l.location?.neighborhood,
-          l.location?.address,
-        ].filter(Boolean).join(' ').toLowerCase();
-        if (!hay.includes(q)) return false;
-      }
-      return true;
-    });
-  }, [listings, filters]);
   const [wallet, setWallet] = useState<any>(null);
   const [transactions, setTransactions] = useState<any[]>([]);
   const [userBookings, setUserBookings] = useState<any[]>([]);
 
   // Fetch Listings
   useEffect(() => {
-const q = query(
-      collection(db, 'listings'),
-      where('moderationStatus', '==', 'approved'),
-      where('isActive', '==', true),
-      orderBy('createdAt', 'desc')
-    );
-const unsubscribe = onSnapshot(q, (snap) => {
+    const q = query(collection(db, 'listings'), orderBy('createdAt', 'desc'));
+    const unsubscribe = onSnapshot(q, (snap) => {
       setListings(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     }, (e) => handleFirestoreError(e, OperationType.LIST, 'listings'));
     return () => unsubscribe();
@@ -449,70 +412,32 @@ const unsubscribe = onSnapshot(q, (snap) => {
     return () => unsubscribe();
   }, [user]);
 
-  const resetAuthModal = () => {
-    setAuthTab('whatsapp');
-    setAuthMode('signin');
-    setAuthStep('form');
-    setAuthEmail('');
-    setAuthPassword('');
-    setAuthDisplayName('');
-    setAuthPhone('');
-    setAuthOtp('');
-    setAuthError('');
-    setDevCodeHint('');
-  };
-
-  const handleEmailAuth = async () => {
+  const handlePhoneSignIn = async () => {
+    if (!phoneNumber) return;
     setLoading(true);
     setAuthError('');
     try {
-      if (authMode === 'signup') {
-        if (!authDisplayName.trim()) {
-          setAuthError('Votre prénom est requis.');
-          setLoading(false);
-          return;
-        }
-        await signUpWithEmail(authEmail, authPassword, authDisplayName.trim());
-      } else {
-        await signInWithEmail(authEmail, authPassword);
-      }
-      setShowLoginModal(false);
-      resetAuthModal();
+      const result = await signInWithPhone(phoneNumber, 'recaptcha-container');
+      setConfirmationResult(result);
+      setOtpStep('code');
     } catch (e: any) {
-      setAuthError(authErrorToFrench(e.code ?? ''));
+      setAuthError(e.message || 'Erreur lors de l\'envoi du SMS');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSendWhatsAppOtp = async () => {
-    setLoading(true);
-    setAuthError('');
-    setDevCodeHint('');
-    try {
-      const { devCode } = await sendWhatsAppOtp(authPhone);
-      setAuthStep('otp');
-      if (devCode) {
-        // Dev mode: prefill the code and show a hint
-        setAuthOtp(devCode);
-        setDevCodeHint(`Mode dev : code = ${devCode}`);
-      }
-    } catch (e: any) {
-      setAuthError(e.message ?? 'Erreur d\'envoi du code.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleVerifyWhatsAppOtp = async () => {
+  const handleVerifyOtp = async () => {
+    if (!verificationCode || !confirmationResult) return;
     setLoading(true);
     setAuthError('');
     try {
-      await verifyWhatsAppOtp(authPhone, authOtp);
+      await verifyCode(confirmationResult, verificationCode);
       setShowLoginModal(false);
-      resetAuthModal();
+      setConfirmationResult(null);
+      setOtpStep('phone');
     } catch (e: any) {
-      setAuthError(e.message ?? 'Code invalide.');
+      setAuthError('Code invalide. Veuillez réessayer.');
     } finally {
       setLoading(false);
     }
@@ -529,14 +454,12 @@ const unsubscribe = onSnapshot(q, (snap) => {
     try {
       const nights = (dateRange.start && dateRange.end) ? (dateRange.end - dateRange.start) : 1;
       const servicesPrice = selectedServices.reduce((acc, s) => acc + (ADD_ONS.find(a => a.id === s)?.price || 0), 0);
-      const cautionAmount = calculateGarantieSiradjou(selectedListing.price, nights);
-      const totalPrice = (selectedListing.price * nights) + servicesPrice + cautionAmount;
-      const hostId = selectedListing.hostId || 'system-seed';
+      const totalPrice = (selectedListing.price * nights) + servicesPrice;
 
       const bookingData = {
         listingId: selectedListing.id,
         listingTitle: selectedListing.title,
-        hostId,
+        hostId: 'mock-host-id',
         guestId: user.uid,
         startDate: `2026-05-${dateRange.start}`,
         endDate: `2026-05-${dateRange.end}`,
@@ -545,7 +468,7 @@ const unsubscribe = onSnapshot(q, (snap) => {
         totalPrice,
         nights,
         services: selectedServices,
-        cautionAmount,
+        cautionAmount: selectedListing.cautionAmount,
         cautionStatus: 'pending',
         paymentMethod: method,
         createdAt: new Date().toISOString(),
@@ -553,40 +476,65 @@ const unsubscribe = onSnapshot(q, (snap) => {
 
       const bookingRef = await addDoc(collection(db, 'bookings'), bookingData);
 
-      // Call checkout API (PayDunya or demo mock)
-      step = 'paydunya_api';
-      const pdResponse = await fetch('/api/paydunya/checkout', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          amount: totalPrice,
-          description: `Réservation Awder : ${selectedListing.title}`,
-          bookingId: bookingRef.id,
-          guestName: user.displayName || profile?.displayName || 'Voyageur Awder',
-          paymentMethod: method,
-        }),
-      });
-
-      const pdData = await pdResponse.json();
-      if (!pdData.success) {
-        throw new Error(pdData.error || 'Erreur lors de l\'initialisation du paiement');
-      }
-
-      if (pdData.demo) {
-        // Demo mode: simulate immediate success by calling our own confirm endpoint
-        await fetch('/api/paydunya/confirm-demo', {
+      if (method === 'paydunya') {
+        step = 'paydunya_api';
+        const pdResponse = await fetch('/api/paydunya/checkout', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ bookingId: bookingRef.id, demoToken: pdData.token }),
+          body: JSON.stringify({
+            amount: totalPrice,
+            description: `Réservation Awder : ${selectedListing.title}`,
+            bookingId: bookingRef.id,
+            guestName: user.displayName || 'Voyageur Awder'
+          })
         });
-        setShowPayment(false);
-        setSelectedListing(null);
-        setActiveTab('bookings');
-        fetchBookings();
-      } else {
-        // Real PayDunya redirect
-        window.location.href = pdData.url;
+        
+        const pdData = await pdResponse.json();
+        if (pdData.success) {
+          window.location.href = pdData.url;
+          return;
+        } else {
+          throw new Error(pdData.error || 'Erreur PayDunya');
+        }
       }
+
+      // Default flow for others (mocked for now as before)
+      step = 'transactions';
+      // ISI: Create Transaction for Escrow
+      await addDoc(collection(db, 'transactions'), {
+        userId: user.uid,
+        bookingId: bookingRef.id,
+        amount: totalPrice,
+        type: 'payment',
+        status: 'completed',
+        paymentMethod: method,
+        description: `Paiement pour ${selectedListing.title} (Sira-Djou)`,
+        createdAt: new Date().toISOString(),
+      });
+
+      step = 'wallets';
+      // Update Wallet Escrow (In a real app, this should be a cloud function/atomic)
+      const walletRef = doc(db, 'wallets', user.uid);
+      await setDoc(walletRef, {
+        escrow: increment(totalPrice),
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+
+      step = 'notifications';
+      // Trigger notification for host
+      await addDoc(collection(db, 'notifications'), {
+        userId: 'mock-host-id',
+        title: 'Nouvelle Réservation !',
+        message: `Un voyageur a réservé "${selectedListing.title}"`,
+        type: 'booking_request',
+        read: false,
+        createdAt: new Date().toISOString()
+      });
+
+      setShowPayment(false);
+      setSelectedListing(null);
+      setActiveTab('bookings');
+      fetchBookings();
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, step);
     } finally {
@@ -606,14 +554,11 @@ const unsubscribe = onSnapshot(q, (snap) => {
       const uRef = doc(db, 'users', user.uid);
       await updateDoc(uRef, {
         role: 'host',
-        isVerified: false,
-        updatedAt: new Date().toISOString(),
+        isVerified: true 
       });
       setUserMode('hote');
       setActiveTab('home');
       setShowHostForm(false);
-      // Ouvrir directement le formulaire de création d'annonce
-      setShowAddListing(true);
     } catch (e) {
       handleFirestoreError(e, OperationType.UPDATE, `users/${user.uid}`);
     } finally {
@@ -626,7 +571,6 @@ const unsubscribe = onSnapshot(q, (snap) => {
       activeTab={activeTab} 
       onTabChange={setActiveTab}
       onBecomeHost={() => setShowHostForm(true)}
-      hideBecomeHost={profile?.role === 'host'}
     >
       {activeTab === 'home' && userMode === 'voyageur' && !selectedListing && (
         <div className="space-y-6">
@@ -649,7 +593,7 @@ const unsubscribe = onSnapshot(q, (snap) => {
             )}
           </div>
           
-          <SearchFilters onSearch={setFilters} />
+          <SearchFilters onSearch={() => {}} />
 
           <div className="px-6 pb-6 space-y-6">
             <div className="flex justify-between items-center px-2">
@@ -657,25 +601,21 @@ const unsubscribe = onSnapshot(q, (snap) => {
               <button className="text-xs font-bold text-awder-ocre underline decoration-awder-ocre/30 underline-offset-8">Voir tout</button>
             </div>
             <div className="grid grid-cols-1 gap-8">
-              {filteredListings.length > 0 ? filteredListings.map((listing) => (
-                <ListingCard
-                  key={listing.id}
-                  listing={listing as any}
+              {listings.length > 0 ? listings.map((listing) => (
+                <ListingCard 
+                  key={listing.id} 
+                  listing={listing as any} 
                   onClick={() => setSelectedListing(listing)}
                 />
-              )) : listings.length === 0 ? (
-                <div className="py-20 text-center space-y-3">
-                  <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mx-auto text-slate-300">
-                    <Home className="w-8 h-8" />
-                  </div>
-                  <p className="text-slate-400 font-bold">Aucune annonce pour le moment</p>
-                  <p className="text-slate-300 text-[10px] font-bold uppercase tracking-widest">
-                    Les hôtes n'ont pas encore publié d'espace
-                  </p>
-                </div>
-              ) : (
-                <div className="py-20 text-center">
-                  <p className="text-slate-400 font-bold">Aucun résultat pour cette recherche</p>
+              )) : (
+                <div className="py-20 text-center space-y-4">
+                  <p className="text-slate-400 font-bold">Aucune annonce disponible</p>
+                  <button 
+                    onClick={seedListings}
+                    className="px-6 py-2 bg-awder-ocre text-white rounded-full font-black text-xs uppercase"
+                  >
+                    Initialiser le système
+                  </button>
                 </div>
               )}
             </div>
@@ -760,37 +700,9 @@ const unsubscribe = onSnapshot(q, (snap) => {
                 </div>
                 <div className="p-6 bg-white rounded-[32px] border border-slate-100 shadow-sm space-y-1">
                   <p className="text-[10px] text-slate-400 font-black uppercase tracking-[0.2em] leading-none">Caution</p>
-                  <p className="text-2xl font-black text-awder-ocre">+{formatPrice(calculateGarantieSiradjou(selectedListing.price, dateRange.start && dateRange.end ? dateRange.end - dateRange.start : 1))} F</p>
+                  <p className="text-2xl font-black text-awder-ocre">+{formatPrice(selectedListing.cautionAmount)} F</p>
                 </div>
               </div>
-
-              {user && selectedListing.hostId && selectedListing.hostId !== user.uid && (
-                <button
-                  onClick={async () => {
-                    try {
-                      const myName = profile?.displayName ?? 'Voyageur';
-                      const convId = await ensureConversation(
-                        user.uid,
-                        myName,
-                        selectedListing.hostId,
-                        'Hôte'
-                      );
-                      setActiveChat({
-                        id: convId,
-                        name: 'Hôte',
-                        avatar: 'HO',
-                        otherUid: selectedListing.hostId,
-                      });
-                    } catch (e: any) {
-                      alert(e.message);
-                    }
-                  }}
-                  className="w-full py-4 bg-white border-2 border-awder-brun text-awder-brun rounded-full font-black text-xs uppercase tracking-widest flex items-center justify-center gap-3 active:scale-95 transition-all"
-                >
-                  <MessageSquare className="w-4 h-4" />
-                  Contacter l&apos;hôte
-                </button>
-              )}
 
               <div className="space-y-4">
                 <h3 className="font-black text-awder-brun text-xl tracking-tight">Description</h3>
@@ -798,32 +710,6 @@ const unsubscribe = onSnapshot(q, (snap) => {
                   {selectedListing.description}
                 </p>
               </div>
-
-              {selectedListing.amenities && selectedListing.amenities.length > 0 && (
-                <div className="space-y-4">
-                  <h3 className="font-black text-awder-brun text-xl tracking-tight">Équipements</h3>
-                  <div className="flex flex-wrap gap-2">
-                    {selectedListing.amenities.map((a: string) => (
-                      <span key={a} className="px-4 py-2 bg-white border border-slate-100 rounded-full text-xs font-black text-awder-brun">
-                        {a}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {selectedListing.images && selectedListing.images.length > 1 && (
-                <div className="space-y-4">
-                  <h3 className="font-black text-awder-brun text-xl tracking-tight">Photos</h3>
-                  <div className="grid grid-cols-2 gap-3">
-                    {selectedListing.images.slice(1).map((img: string, idx: number) => (
-                      <div key={`detail-img-${idx}`} className="relative aspect-square rounded-3xl overflow-hidden">
-                        <Image src={img} alt={`Photo ${idx + 2}`} fill sizes="(max-width: 768px) 50vw, 200px" className="object-cover" referrerPolicy="no-referrer" />
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
 
               {/* Availability Calendar */}
               <div className="space-y-4">
@@ -925,7 +811,7 @@ const unsubscribe = onSnapshot(q, (snap) => {
                   <div className="space-y-2">
                     <h4 className="text-sm font-black text-awder-ocre uppercase tracking-widest">Sira-Djou (Sécurité Awder)</h4>
                     <p className="text-xs text-slate-500 leading-relaxed font-semibold">
-                      Une garantie remboursable de {formatPrice(calculateGarantieSiradjou(selectedListing.price, dateRange.start && dateRange.end ? dateRange.end - dateRange.start : 1))} FCFA est incluse. Elle vous sera intégralement restituée 24h après votre départ si aucun dommage n'est signalé.
+                      Une caution de {formatPrice(selectedListing.cautionAmount)} FCFA sera retenue temporairement. Elle vous sera libérée 24h après votre départ.
                     </p>
                   </div>
                 </div>
@@ -1066,11 +952,10 @@ const unsubscribe = onSnapshot(q, (snap) => {
       )}
 
       {activeTab === 'home' && userMode === 'hote' && (
-        <HostDashboard
-          profile={profile}
+        <HostDashboard 
+          profile={profile} 
           wallet={wallet}
           transactions={transactions}
-          myListings={listings.filter((l) => l.hostId === user?.uid)}
           notifications={notifications}
           onShowNotifications={() => setShowNotifications(true)}
           onShowSupport={() => setShowSupport(true)}
@@ -1121,7 +1006,7 @@ const unsubscribe = onSnapshot(q, (snap) => {
         />
       )}
       
-      {showWallet && <WalletOverlay wallet={wallet} transactions={transactions} onClose={() => setShowWallet(false)} />}
+      {showWallet && <WalletOverlay onClose={() => setShowWallet(false)} />}
       {showTerriyan && <TerriyanOverlay onClose={() => setShowTerriyan(false)} />}
       {showPersonalInfo && <PersonalInfoOverlay profile={profile} onClose={() => setShowPersonalInfo(false)} />}
       {showSupport && <SupportOverlay onClose={() => setShowSupport(false)} />}
@@ -1129,28 +1014,27 @@ const unsubscribe = onSnapshot(q, (snap) => {
       {showAddListing && (
         <AddListingOverlay 
           onClose={() => setShowAddListing(false)}
-          onRequireKYC={() => {
-            setShowAddListing(false);
-            setShowIdVerification(true);
-          }}
           onSuccess={() => {
             setShowAddListing(false);
+            // In a real app we'd refresh the host's listings
           }}
         />
       )}
 
       {activeTab === 'messages' && (
-        <MessagesView
-          myUid={user?.uid ?? null}
+        <MessagesView 
           onSelectChat={(chat: any) => setActiveChat(chat)}
         />
       )}
 
-      {activeChat && user && (
-        <ChatOverlay
-          chat={activeChat}
-          myUid={user.uid}
+      {activeChat && (
+        <ChatOverlay 
+          chat={activeChat} 
+          messages={messages}
           onClose={() => setActiveChat(null)}
+          onSendMessage={(text: string) => {
+            setMessages([...messages, { id: Date.now().toString(), senderId: 'me', text, timestamp: new Date().toISOString() }]);
+          }}
         />
       )}
 
@@ -1227,14 +1111,11 @@ const unsubscribe = onSnapshot(q, (snap) => {
 
                 <div className="flex gap-2">
                   {booking.status === 'paid_escrow' && booking.checkInStatus !== 'checked_in' && booking.checkInStatus !== 'checked_out' && (
-                    <button
-                      onClick={async () => {
-                        try {
-                          await callBookingAction(booking.id, 'check_in');
-                          fetchBookings();
-                        } catch (err: any) {
-                          alert(err.message);
-                        }
+                    <button 
+                      onClick={() => {
+                        const bRef = doc(db, 'bookings', booking.id);
+                        updateDoc(bRef, { checkInStatus: 'checked_in' });
+                        fetchBookings();
                       }}
                       disabled={loading}
                       className="flex-1 py-4 bg-awder-ocre text-white rounded-[24px] font-black flex items-center justify-center gap-2 shadow-lg shadow-awder-ocre/20 active:scale-95 transition-all text-xs uppercase tracking-widest"
@@ -1244,15 +1125,21 @@ const unsubscribe = onSnapshot(q, (snap) => {
                     </button>
                   )}
                   {booking.checkInStatus === 'checked_in' && (
-                    <button
+                    <button 
                       onClick={async () => {
-                        try {
-                          await callBookingAction(booking.id, 'check_out');
-                          fetchBookings();
-                          setShowDiyaRating(booking);
-                        } catch (err: any) {
-                          alert(err.message);
-                        }
+                        const bRef = doc(db, 'bookings', booking.id);
+                        await updateDoc(bRef, { checkInStatus: 'checked_out' });
+                        
+                        // Trigger notification for host
+                        await addNotification(
+                          booking.hostId,
+                          'Check-out effectué',
+                          `Le voyageur a quitté "${booking.listingTitle}"`,
+                          'check_out'
+                        );
+
+                        fetchBookings();
+                        setShowDiyaRating(booking);
                       }}
                       disabled={loading}
                       className="flex-1 py-4 bg-awder-brun text-white rounded-[24px] font-black flex items-center justify-center gap-2 shadow-lg shadow-awder-brun/20 active:scale-95 transition-all text-xs uppercase tracking-widest"
@@ -1262,20 +1149,13 @@ const unsubscribe = onSnapshot(q, (snap) => {
                     </button>
                   )}
                   {booking.checkInStatus === 'checked_out' && booking.status === 'paid_escrow' && (
-                    <button
-                      onClick={async () => {
-                        try {
-                          await callBookingAction(booking.id, 'release_caution');
-                          fetchBookings();
-                        } catch (err: any) {
-                          alert(err.message);
-                        }
-                      }}
+                    <button 
+                      onClick={() => handleReleaseFunds(booking)}
                       disabled={loading}
                       className="flex-1 py-4 bg-awder-gold text-awder-brun rounded-[24px] font-black flex items-center justify-center gap-2 shadow-lg shadow-awder-gold/20 active:scale-95 transition-all text-xs uppercase tracking-widest animate-pulse"
                     >
                       <CheckCircle2 className="w-4 h-4" />
-                      Libérer la caution
+                      Libérer les fonds
                     </button>
                   )}
                 </div>
@@ -1404,28 +1284,47 @@ const unsubscribe = onSnapshot(q, (snap) => {
           <main className="flex-1 overflow-y-auto px-8 py-10 space-y-10">
             <div className="space-y-2">
               <h3 className="text-3xl font-black text-awder-brun leading-tight tracking-tighter">Votre Espace, <span className="text-awder-ocre">Votre Revenu</span>.</h3>
-              <p className="text-sm text-slate-400 font-bold leading-relaxed">Rejoignez la famille des Hôtes Koron. Aucun document requis maintenant.</p>
+              <p className="text-sm text-slate-400 font-bold leading-relaxed">Remplissez ce formulaire pour rejoindre la famille des Hôtes Koron.</p>
             </div>
 
             <div className="space-y-8">
-              {/* Bénéfices */}
+              {/* Form Section 1 */}
               <div className="space-y-4">
-                <p className="text-[10px] font-black text-awder-gold uppercase tracking-[0.3em]">Pourquoi Awder ?</p>
-                <div className="space-y-3">
-                  {[
-                    { icon: <Wallet className="w-5 h-5" />, title: "Gagnez en FCFA", desc: "Wave, Orange Money, MTN — sur votre wallet Awder." },
-                    { icon: <ShieldCheck className="w-5 h-5" />, title: "Paiements garantis", desc: "L'escrow Sira-Djou bloque l'argent jusqu'à la fin du séjour." },
-                    { icon: <TrendingUp className="w-5 h-5" />, title: "Seulement 5% de commission", desc: "Vs 14-16% chez Airbnb. Plus de FCFA pour vous." },
-                    { icon: <CheckCircle2 className="w-5 h-5" />, title: "Visible rapidement", desc: "Créez votre annonce, vérification (2 photos) avant publication." },
-                  ].map((b) => (
-                    <div key={b.title} className="flex gap-4 items-start p-5 bg-white border border-slate-100 rounded-3xl">
-                      <div className="p-3 bg-awder-ocre/10 text-awder-ocre rounded-2xl flex-shrink-0">{b.icon}</div>
-                      <div>
-                        <p className="font-black text-awder-brun text-sm">{b.title}</p>
-                        <p className="text-xs text-slate-400 font-bold leading-relaxed mt-0.5">{b.desc}</p>
-                      </div>
-                    </div>
-                  ))}
+                <p className="text-[10px] font-black text-awder-gold uppercase tracking-[0.3em]">1. Propriétaire</p>
+                <input placeholder="Nom complet" className="w-full p-5 bg-white border border-slate-100 rounded-3xl outline-none focus:border-awder-gold font-bold text-awder-brun" />
+                <input placeholder="Téléphone (WhatsApp)" className="w-full p-5 bg-white border border-slate-100 rounded-3xl outline-none focus:border-awder-gold font-bold text-awder-brun" />
+                <div className="flex bg-slate-50 p-1.5 rounded-[24px] border border-slate-100">
+                  <button className="flex-1 py-3 bg-white shadow-sm rounded-xl text-xs font-black text-awder-ocre">Wave/OM</button>
+                  <button className="flex-1 py-3 text-xs font-black text-slate-400">Virement</button>
+                </div>
+              </div>
+
+              {/* Form Section 2 */}
+              <div className="space-y-4">
+                <p className="text-[10px] font-black text-awder-gold uppercase tracking-[0.3em]">2. Le Lieu</p>
+                <input placeholder="Nom du lieu (ex: Villa Or)" className="w-full p-5 bg-white border border-slate-100 rounded-3xl outline-none focus:border-awder-gold font-bold text-awder-brun" />
+                <div className="grid grid-cols-2 gap-4">
+                  <input placeholder="Ville" className="w-full p-5 bg-white border border-slate-100 rounded-3xl outline-none focus:border-awder-gold font-bold text-awder-brun" />
+                  <input placeholder="Quartier" className="w-full p-5 bg-white border border-slate-100 rounded-3xl outline-none focus:border-awder-gold font-bold text-awder-brun" />
+                </div>
+              </div>
+
+              {/* Form Section 3 */}
+              <div className="space-y-4">
+                <p className="text-[10px] font-black text-awder-gold uppercase tracking-[0.3em]">3. Équipements</p>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="p-5 bg-white border border-slate-100 rounded-3xl flex items-center gap-3">
+                    <div className="w-5 h-5 rounded-md border-2 border-slate-200"></div>
+                    <span className="text-xs font-bold text-slate-600">Piscine</span>
+                  </div>
+                  <div className="p-5 bg-white border border-slate-100 rounded-3xl flex items-center gap-3">
+                    <div className="w-5 h-5 rounded-md border-2 border-awder-ocre bg-awder-ocre"></div>
+                    <span className="text-xs font-bold text-awder-ocre">Wifi</span>
+                  </div>
+                  <div className="p-5 bg-white border border-slate-200 rounded-3xl flex items-center gap-3 col-span-2">
+                    <div className="w-5 h-5 rounded-md border-2 border-awder-ocre bg-awder-ocre"></div>
+                    <span className="text-xs font-bold text-awder-ocre italic">Groupe Électrogène (Recommandé)</span>
+                  </div>
                 </div>
               </div>
 
@@ -1434,12 +1333,12 @@ const unsubscribe = onSnapshot(q, (snap) => {
                 disabled={loading}
                 className="w-full py-6 bg-awder-ocre text-white rounded-full font-black text-lg shadow-2xl shadow-awder-ocre/30 active:scale-95 transition-all flex items-center justify-center gap-2"
               >
-                {loading ? <div className="w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin"></div> : 'Commencer maintenant'}
+                {loading ? <div className="w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin"></div> : 'Soumettre ma demande'}
               </button>
             </div>
             
             <p className="text-[10px] text-center text-slate-400 font-bold uppercase tracking-widest leading-relaxed px-10">
-              Aucun document requis. La vérification (2 photos, 2 min) se fait juste avant publication.
+              I ni ce ! Nous allons valider votre profil et vous envoyer votre accès Hôte Fondateur sous 48h.
             </p>
           </main>
         </div>
@@ -1554,184 +1453,109 @@ const unsubscribe = onSnapshot(q, (snap) => {
       {/* Login Modal */}
       {showLoginModal && (
         <div className="fixed inset-0 z-[400] bg-awder-brun/95 backdrop-blur-xl flex items-center justify-center p-6">
-          <motion.div
+          <motion.div 
             initial={{ scale: 0.9, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             className="w-full max-w-md bg-white rounded-[50px] overflow-hidden shadow-2xl relative"
           >
-            <button
-              onClick={() => { setShowLoginModal(false); resetAuthModal(); }}
+            <button 
+              onClick={() => {
+                setShowLoginModal(false);
+                setOtpStep('phone');
+                setAuthError('');
+              }}
               className="absolute top-8 right-8 p-3 bg-slate-50 text-slate-400 rounded-2xl hover:bg-slate-100 transition-all"
             >
               <X className="w-5 h-5" />
             </button>
-
-            <div className="p-10 space-y-8">
-              {/* Header */}
+            
+            <div className="p-10 space-y-10">
               <div className="text-center space-y-4">
-                <div className="w-20 h-20 bg-awder-ocre/10 rounded-full flex items-center justify-center mx-auto text-awder-ocre">
+                <div className="w-20 h-20 bg-awder-ocre/10 rounded-full flex items-center justify-center mx-auto text-awder-ocre scale-110">
                   <User className="w-10 h-10" />
                 </div>
                 <div className="space-y-2">
                   <h3 className="text-3xl font-black text-awder-brun tracking-tighter leading-none">Bienvenue chez Awder</h3>
-                  <p className="text-sm font-bold text-slate-400 tracking-tight italic">Connectez-vous pour continuer.</p>
+                  <p className="text-sm font-bold text-slate-400 tracking-tight italic">Connectez-vous pour continuer l&apos;aventure.</p>
                 </div>
               </div>
 
-              {/* Tab switcher Email / WhatsApp */}
-              <div className="flex bg-slate-50 rounded-2xl p-1">
-                <button
-                  onClick={() => { setAuthTab('email'); setAuthStep('form'); setAuthError(''); }}
-                  className={`flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${authTab === 'email' ? 'bg-white text-awder-brun shadow-sm' : 'text-slate-400'}`}
-                >
-                  <Mail className="w-4 h-4" /> Email
-                </button>
-                <button
-                  onClick={() => { setAuthTab('whatsapp'); setAuthStep('form'); setAuthError(''); }}
-                  className={`flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${authTab === 'whatsapp' ? 'bg-white text-awder-brun shadow-sm' : 'text-slate-400'}`}
-                >
-                  <MessageSquare className="w-4 h-4" /> WhatsApp
-                </button>
-              </div>
-
-              {/* Error */}
               {authError && (
                 <div className="p-4 bg-red-50 border border-red-100 rounded-2xl text-red-500 text-xs font-bold text-center">
                   {authError}
                 </div>
               )}
 
-              {/* ── Email tab ── */}
-              {authTab === 'email' && (
-                <div className="space-y-4">
-                  {/* Connexion / Inscription toggle */}
-                  <div className="flex bg-slate-50 rounded-2xl p-1">
-                    <button
-                      onClick={() => { setAuthMode('signin'); setAuthError(''); }}
-                      className={`flex-1 py-2 rounded-xl font-black text-xs uppercase tracking-widest transition-all ${authMode === 'signin' ? 'bg-white text-awder-brun shadow-sm' : 'text-slate-400'}`}
-                    >
-                      Connexion
-                    </button>
-                    <button
-                      onClick={() => { setAuthMode('signup'); setAuthError(''); }}
-                      className={`flex-1 py-2 rounded-xl font-black text-xs uppercase tracking-widest transition-all ${authMode === 'signup' ? 'bg-white text-awder-brun shadow-sm' : 'text-slate-400'}`}
-                    >
-                      Inscription
-                    </button>
-                  </div>
-
-                  {authMode === 'signup' && (
+              <div className="space-y-6">
+                {otpStep === 'phone' ? (
+                  <div className="space-y-4">
+                    <p className="text-[10px] font-black text-awder-gold uppercase tracking-[0.4em] text-center">Connexion par Téléphone</p>
                     <div className="relative group">
-                      <User className="absolute left-6 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-300 group-focus-within:text-awder-ocre transition-colors" />
-                      <input
-                        type="text"
-                        placeholder="Votre prénom"
-                        value={authDisplayName}
-                        onChange={(e) => setAuthDisplayName(e.target.value)}
-                        className="w-full p-5 pl-16 bg-slate-50 border border-slate-100 rounded-[24px] outline-none focus:border-awder-gold font-bold text-awder-brun transition-all"
+                      <Phone className="absolute left-6 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-300 group-focus-within:text-awder-ocre transition-colors" />
+                      <input 
+                        type="tel"
+                        placeholder="+223"
+                        value={phoneNumber}
+                        onChange={(e) => setPhoneNumber(e.target.value)}
+                        className="w-full p-6 pl-16 bg-slate-50 border border-slate-100 rounded-[32px] outline-none focus:border-awder-gold font-black text-awder-brun transition-all"
                       />
                     </div>
-                  )}
-
-                  <div className="relative group">
-                    <Mail className="absolute left-6 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-300 group-focus-within:text-awder-ocre transition-colors" />
-                    <input
-                      type="email"
-                      placeholder="votre@email.com"
-                      value={authEmail}
-                      onChange={(e) => setAuthEmail(e.target.value)}
-                      className="w-full p-5 pl-16 bg-slate-50 border border-slate-100 rounded-[24px] outline-none focus:border-awder-gold font-bold text-awder-brun transition-all"
-                    />
+                    <button 
+                      onClick={handlePhoneSignIn}
+                      disabled={loading || !phoneNumber}
+                      className="w-full py-6 bg-awder-ocre text-white rounded-[32px] font-black text-sm uppercase tracking-[0.2em] shadow-xl shadow-awder-ocre/20 active:scale-95 transition-all disabled:opacity-50"
+                    >
+                      {loading ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin mx-auto"></div> : 'Recevoir le Code SMS'}
+                    </button>
+                    <div id="recaptcha-container" className="flex justify-center mt-2"></div>
                   </div>
-
-                  <div className="relative group">
-                    <ShieldCheck className="absolute left-6 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-300 group-focus-within:text-awder-ocre transition-colors" />
-                    <input
-                      type="password"
-                      placeholder="Mot de passe"
-                      value={authPassword}
-                      onChange={(e) => setAuthPassword(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && handleEmailAuth()}
-                      className="w-full p-5 pl-16 bg-slate-50 border border-slate-100 rounded-[24px] outline-none focus:border-awder-gold font-bold text-awder-brun transition-all"
-                    />
+                ) : (
+                  <div className="space-y-6">
+                    <p className="text-[10px] font-black text-awder-gold uppercase tracking-[0.4em] text-center">Entrez le Code Reçu</p>
+                    <div className="relative group">
+                      <ShieldCheck className="absolute left-6 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-300 group-focus-within:text-awder-ocre transition-colors" />
+                      <input 
+                        type="text"
+                        placeholder="000000"
+                        value={verificationCode}
+                        onChange={(e) => setVerificationCode(e.target.value)}
+                        className="w-full p-6 pl-16 bg-slate-50 border border-slate-100 rounded-[32px] outline-none focus:border-awder-gold font-black text-awder-brun tracking-[1em] transition-all"
+                        maxLength={6}
+                      />
+                    </div>
+                    <button 
+                      onClick={handleVerifyOtp}
+                      disabled={loading || verificationCode.length < 6}
+                      className="w-full py-6 bg-awder-ocre text-white rounded-[32px] font-black text-sm uppercase tracking-[0.2em] shadow-xl shadow-awder-ocre/20 active:scale-95 transition-all disabled:opacity-50"
+                    >
+                      {loading ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin mx-auto"></div> : 'Vérifier & Se Connecter'}
+                    </button>
+                    <button 
+                      onClick={() => setOtpStep('phone')}
+                      className="w-full py-2 text-slate-400 font-bold text-[10px] uppercase tracking-widest hover:text-awder-ocre transition-colors"
+                    >
+                      Modifier le numéro
+                    </button>
                   </div>
+                )}
 
-                  <button
-                    onClick={handleEmailAuth}
-                    disabled={loading || !authEmail || !authPassword}
-                    className="w-full py-6 bg-awder-ocre text-white rounded-[32px] font-black text-sm uppercase tracking-[0.2em] shadow-xl shadow-awder-ocre/20 active:scale-95 transition-all disabled:opacity-50"
-                  >
-                    {loading
-                      ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin mx-auto" />
-                      : authMode === 'signin' ? 'Se Connecter' : 'Créer mon compte'}
-                  </button>
+                <div className="relative flex items-center justify-center py-4">
+                  <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-slate-100"></div></div>
+                  <span className="relative px-6 bg-white text-[9px] font-black text-slate-300 uppercase tracking-[0.4em]">Ou via Google</span>
                 </div>
-              )}
 
-              {/* ── WhatsApp tab ── */}
-              {authTab === 'whatsapp' && (
-                <div className="space-y-4">
-                  {authStep === 'form' ? (
-                    <>
-                      <p className="text-[10px] font-black text-awder-gold uppercase tracking-[0.4em] text-center">Votre numéro WhatsApp</p>
-                      <div className="relative group">
-                        <Phone className="absolute left-6 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-300 group-focus-within:text-awder-ocre transition-colors" />
-                        <input
-                          type="tel"
-                          placeholder="+223 70 00 00 00"
-                          value={authPhone}
-                          onChange={(e) => setAuthPhone(e.target.value)}
-                          className="w-full p-5 pl-16 bg-slate-50 border border-slate-100 rounded-[24px] outline-none focus:border-awder-gold font-bold text-awder-brun transition-all"
-                        />
-                      </div>
-                      <button
-                        onClick={handleSendWhatsAppOtp}
-                        disabled={loading || !authPhone}
-                        className="w-full py-6 bg-awder-ocre text-white rounded-[32px] font-black text-sm uppercase tracking-[0.2em] shadow-xl shadow-awder-ocre/20 active:scale-95 transition-all disabled:opacity-50"
-                      >
-                        {loading
-                          ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin mx-auto" />
-                          : 'Recevoir le code'}
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <p className="text-[10px] font-black text-awder-gold uppercase tracking-[0.4em] text-center">Code reçu sur WhatsApp</p>
-                      {devCodeHint && (
-                        <div className="p-3 bg-amber-50 border border-amber-200 rounded-2xl text-amber-700 text-xs font-black text-center">
-                          {devCodeHint}
-                        </div>
-                      )}
-                      <div className="relative group">
-                        <ShieldCheck className="absolute left-6 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-300 group-focus-within:text-awder-ocre transition-colors" />
-                        <input
-                          type="text"
-                          placeholder="000000"
-                          value={authOtp}
-                          onChange={(e) => setAuthOtp(e.target.value)}
-                          maxLength={6}
-                          className="w-full p-5 pl-16 bg-slate-50 border border-slate-100 rounded-[24px] outline-none focus:border-awder-gold font-black text-awder-brun tracking-[0.8em] transition-all"
-                        />
-                      </div>
-                      <button
-                        onClick={handleVerifyWhatsAppOtp}
-                        disabled={loading || authOtp.length < 6}
-                        className="w-full py-6 bg-awder-ocre text-white rounded-[32px] font-black text-sm uppercase tracking-[0.2em] shadow-xl shadow-awder-ocre/20 active:scale-95 transition-all disabled:opacity-50"
-                      >
-                        {loading
-                          ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin mx-auto" />
-                          : 'Vérifier & Entrer'}
-                      </button>
-                      <button
-                        onClick={() => { setAuthStep('form'); setAuthOtp(''); setAuthError(''); }}
-                        className="w-full py-2 text-slate-400 font-bold text-[10px] uppercase tracking-widest hover:text-awder-ocre transition-colors"
-                      >
-                        Modifier le numéro
-                      </button>
-                    </>
-                  )}
-                </div>
-              )}
+                <button 
+                  onClick={async () => {
+                    setLoading(true);
+                    try { await signIn(); setShowLoginModal(false); } catch(e) {} finally { setLoading(false); }
+                  }}
+                  disabled={loading}
+                  className="w-full py-6 bg-white border border-slate-100 text-awder-brun rounded-[32px] font-black text-sm flex items-center justify-center gap-4 hover:border-awder-gold shadow-sm active:scale-95 transition-all"
+                >
+                  <Image src="https://www.google.com/favicon.ico" alt="Google" width={18} height={18} />
+                  Continuer avec Google
+                </button>
+              </div>
 
               <p className="text-[9px] text-center text-slate-300 font-bold uppercase tracking-widest leading-relaxed px-6">
                 En continuant, vous acceptez nos conditions d&apos;utilisation et notre politique de confidentialité Sira-Djou.
@@ -1762,7 +1586,7 @@ const PaymentButton = ({ method, label, color, icon, loading, onClick }: any) =>
   </button>
 );
 
-const HostDashboard = ({ profile, onAddListing, onViewBooking, onSwitchMode, activeSubTab, onSubTabChange, notifications, onShowNotifications, onShowSupport, wallet, transactions, myListings = [] }: any) => {
+const HostDashboard = ({ profile, onAddListing, onViewBooking, onSwitchMode, activeSubTab, onSubTabChange, notifications, onShowNotifications, onShowSupport, wallet, transactions }: any) => {
   const unreadCount = notifications?.filter((n: any) => !n.read).length || 0;
 
   return (
@@ -1864,35 +1688,43 @@ const HostDashboard = ({ profile, onAddListing, onViewBooking, onSwitchMode, act
 
       {activeSubTab === 'overview' && (
         <div className="space-y-6">
-          {/* Score Diya — nul si pas encore de réservations terminées */}
-          {transactions && transactions.filter((t: any) => t.type === 'escrow_release').length > 0 ? (
-            <div className="p-8 bg-awder-brun text-white rounded-[40px] shadow-2xl space-y-4">
-              <div className="flex items-center gap-3">
-                <Star className="w-6 h-6 text-awder-gold" />
-                <h4 className="font-black text-lg">Score Diya: 4.8/5</h4>
-              </div>
-              <p className="text-xs text-white/60 font-medium">Votre accueil est légendaire ! Continuez ainsi pour rester Hôte Koron.</p>
+          <div className="p-8 bg-white border border-slate-100 rounded-[40px] shadow-sm space-y-6">
+            <h3 className="font-black text-awder-brun text-xl tracking-tight">Configuration Hôte</h3>
+            <div className="grid grid-cols-1 gap-4">
+              <ProfileLink 
+                icon={<BarChart3 className="w-6 h-6" />} 
+                label="Mes Gains Awder" 
+                onClick={() => onSubTabChange('overview')}
+              />
+              <ProfileLink 
+                icon={<PlusCircle className="w-6 h-6" />} 
+                label="Nouvelle Annonce" 
+                onClick={onAddListing}
+              />
+              <ProfileLink 
+                icon={<ShieldCheck className="w-6 h-6" />} 
+                label="Vérification d'Identité" 
+                badge={profile?.idVerificationStatus === 'verified' ? 'Validé' : 'À faire'}
+              />
+              <ProfileLink 
+                icon={<Lock className="w-6 h-6" />} 
+                label="Sécurité du Logement" 
+              />
+              <ProfileLink 
+                icon={<Headphones className="w-6 h-6" />} 
+                label="Contacter Support Awder" 
+                onClick={onShowSupport}
+              />
             </div>
-          ) : myListings && myListings.length === 0 ? (
-            <div className="p-8 bg-awder-brun/5 border border-awder-brun/10 rounded-[40px] space-y-3 text-center">
-              <div className="w-14 h-14 bg-awder-ocre/10 rounded-full flex items-center justify-center mx-auto">
-                <Home className="w-6 h-6 text-awder-ocre" />
-              </div>
-              <p className="font-black text-awder-brun text-sm">Créez votre première annonce</p>
-              <p className="text-xs text-slate-400 font-medium leading-relaxed">
-                Votre tableau de bord s&apos;animera dès votre première réservation.
-              </p>
-    
+          </div>
+          
+          <div className="p-8 bg-awder-brun text-white rounded-[40px] shadow-2xl space-y-4">
+            <div className="flex items-center gap-3">
+              <Star className="w-6 h-6 text-awder-gold" />
+              <h4 className="font-black text-lg">Score Diya: 4.8/5</h4>
             </div>
-          ) : (
-            <div className="p-8 bg-awder-brun/5 border border-awder-brun/10 rounded-[40px] space-y-3">
-              <div className="flex items-center gap-3">
-                <Star className="w-6 h-6 text-awder-gold/40" />
-                <h4 className="font-black text-awder-brun text-lg">Score Diya</h4>
-              </div>
-              <p className="text-xs text-slate-400 font-medium">Votre score apparaîtra après votre première réservation terminée.</p>
-            </div>
-          )}
+            <p className="text-xs text-white/60 font-medium">Votre accueil est légendaire ! Continuez ainsi pour rester Hôte Koron.</p>
+          </div>
         </div>
       )}
 
@@ -1910,10 +1742,10 @@ const HostDashboard = ({ profile, onAddListing, onViewBooking, onSwitchMode, act
             </div>
             <div className="p-8 bg-white border border-slate-100 rounded-[40px] space-y-2 shadow-sm relative overflow-hidden group">
               <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest select-none">Nouvelle Awder</p>
-              <p className="text-2xl font-black text-awder-brun leading-none">{myListings?.length || 0}</p>
+              <p className="text-2xl font-black text-awder-brun leading-none">12</p>
               <div className="flex items-center gap-1 text-awder-gold font-black text-[10px]">
                 <Activity className="w-3 h-3" />
-                <span>{myListings?.filter((l: any) => l.moderationStatus === 'approved').length || 0} publiée{(myListings?.filter((l: any) => l.moderationStatus === 'approved').length || 0) > 1 ? 's' : ''}</span>
+                <span>8 confirmées</span>
               </div>
             </div>
           </div>
@@ -1959,36 +1791,30 @@ const HostDashboard = ({ profile, onAddListing, onViewBooking, onSwitchMode, act
 
       {activeSubTab === 'listings' && (
         <div className="space-y-6">
-          {myListings.length === 0 ? (
-            <div className="py-16 text-center space-y-3">
-              <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mx-auto text-slate-300">
-                <Home className="w-8 h-8" />
-              </div>
-              <p className="text-slate-400 font-bold text-sm">Vous n'avez pas encore d'annonce</p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 gap-4">
-              {myListings.map((listing: any) => (
-                <div key={listing.id} className="p-6 bg-white border border-slate-100 rounded-[40px] space-y-4 shadow-sm">
-                  <div className="flex gap-4">
-                    <div className="w-20 h-20 rounded-2xl overflow-hidden relative border border-slate-100">
-                      <Image src={listing.images?.[0] ?? 'https://picsum.photos/seed/x/200'} alt={listing.title} fill className="object-cover" referrerPolicy="no-referrer" />
-                    </div>
-                    <div className="flex-1 space-y-1">
-                      <h4 className="font-black text-awder-brun">{listing.title}</h4>
-                      <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest leading-none mb-1">{listing.location?.city}</p>
-                      <p className="text-[10px] font-black text-awder-ocre uppercase tracking-widest italic">
-                        {listing.isVerified ? 'Vérifiée' : 'En attente'}
-                      </p>
-                      <p className="text-sm font-black text-awder-brun tracking-tighter mt-1">
-                        {formatPrice(listing.price)} F / {listing.pricingType === 'hourly' ? 'heure' : 'nuit'}
-                      </p>
-                    </div>
+          <div className="grid grid-cols-1 gap-4">
+            {MOCK_LISTINGS.map((listing) => (
+              <div key={listing.id} className="p-6 bg-white border border-slate-100 rounded-[40px] space-y-4 shadow-sm">
+                <div className="flex gap-4">
+                  <div className="w-20 h-20 rounded-2xl overflow-hidden relative border border-slate-100">
+                    <Image src={listing.images[0]} alt={listing.title} fill className="object-cover" referrerPolicy="no-referrer" />
                   </div>
+              <div className="flex-1 space-y-1">
+                    <h4 className="font-black text-awder-brun">{listing.title}</h4>
+                    <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest leading-none mb-1">{listing.location.city}</p>
+                    <p className="text-[10px] font-black text-awder-ocre uppercase tracking-widest italic">Mes Annonces Awder</p>
+                    <p className="text-sm font-black text-awder-brun tracking-tighter mt-1">{formatPrice(listing.price)} F / nuit</p>
+                  </div>
+                  <button className="p-3 self-start bg-slate-50 rounded-2xl text-slate-400">
+                    <Settings className="w-5 h-5" />
+                  </button>
                 </div>
-              ))}
-            </div>
-          )}
+                <div className="flex gap-2 pt-2">
+                  <button className="flex-1 py-3 bg-awder-brun/5 text-awder-brun font-black text-[10px] uppercase tracking-widest rounded-2xl border border-awder-brun/10">Statistiques</button>
+                  <button className="flex-1 py-3 bg-awder-gold/5 text-awder-gold font-black text-[10px] uppercase tracking-widest rounded-2xl border border-awder-gold/10">Promotion</button>
+                </div>
+              </div>
+            ))}
+          </div>
           <button onClick={onAddListing} className="w-full py-6 bg-awder-brun text-white rounded-[32px] font-black text-lg flex items-center justify-center gap-4 shadow-2xl shadow-awder-brun/30 active:scale-95 transition-all">
             <Plus className="w-6 h-6" />
             Nouvelle Annonce
@@ -2093,32 +1919,7 @@ const HostTabButton = ({ icon, label, active, onClick }: any) => (
 );
 
 const IdentityOverlay = ({ onClose, onSuccess }: any) => {
-  const { user } = useAuth();
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const fileInputRef = React.useRef<HTMLInputElement>(null);
-
-  const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !user) return;
-    setError(null);
-    setLoading(true);
-    try {
-      const url = await uploadUserImage(file, user.uid, 'idcard');
-      const uRef = doc(db, 'users', user.uid);
-      await updateDoc(uRef, {
-        idCardUrl: url,
-        idVerificationStatus: 'pending',
-        updatedAt: new Date().toISOString(),
-      });
-      onSuccess();
-    } catch (e: any) {
-      setError(e.message ?? 'Échec de l\'upload.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
   return (
     <div className="fixed inset-0 z-[200] bg-awder-brun/98 backdrop-blur-xl flex flex-col p-8">
       <div className="flex-1 flex flex-col justify-center items-center text-center space-y-10">
@@ -2130,26 +1931,22 @@ const IdentityOverlay = ({ onClose, onSuccess }: any) => {
           <p className="text-white/60 text-sm font-medium px-6 leading-relaxed">
             Pour garantir la sécurité de la communauté Awder, nous vérifions l&apos;identité de chaque hôte avant sa première publication.
           </p>
-          {error && <p className="text-red-300 font-bold text-xs">{error}</p>}
         </div>
         <div className="w-full space-y-4">
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            capture="environment"
-            className="hidden"
-            onChange={handleFile}
-          />
-          <button
-            className="w-full py-6 bg-white rounded-full font-black text-awder-brun flex items-center justify-center gap-4 active:scale-95 transition-all shadow-2xl disabled:opacity-60"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={loading}
+          <button 
+            className="w-full py-6 bg-white rounded-full font-black text-awder-brun flex items-center justify-center gap-4 active:scale-95 transition-all shadow-2xl"
+            onClick={() => {
+              setLoading(true);
+              setTimeout(() => {
+                setLoading(false);
+                onSuccess();
+              }, 2000);
+            }}
           >
             {loading ? <Activity className="w-6 h-6 animate-spin" /> : <><Camera className="w-6 h-6" /> Scanner ma Pièce d&apos;Identité</>}
           </button>
-          <button
-            onClick={onClose}
+          <button 
+            onClick={onClose} 
             className="w-full py-4 bg-white/10 text-white rounded-full font-black text-xs uppercase tracking-widest border border-white/20 active:scale-95 transition-all"
           >
             Retour
@@ -2164,34 +1961,7 @@ const DiyaRatingOverlay = ({ booking, onClose, onSuccess }: any) => {
   const [rating, setRating] = useState(5);
   const [cleanliness, setCleanliness] = useState(5);
   const [communication, setCommunication] = useState(5);
-  const [saving, setSaving] = useState(false);
-
-  const handleSubmit = async () => {
-    if (!auth.currentUser || !booking) {
-      onSuccess();
-      return;
-    }
-    setSaving(true);
-    try {
-      await addDoc(collection(db, 'reviews'), {
-        bookingId: booking.id,
-        listingId: booking.listingId,
-        fromUserId: auth.currentUser.uid,
-        toUserId: booking.hostId,
-        rating,
-        cleanliness,
-        communication,
-        createdAt: new Date().toISOString(),
-      });
-      onSuccess();
-    } catch (e: any) {
-      handleFirestoreError(e, OperationType.CREATE, 'reviews');
-      onClose();
-    } finally {
-      setSaving(false);
-    }
-  };
-
+  
   return (
     <div className="fixed inset-0 z-[200] bg-awder-ocre/98 backdrop-blur-xl flex flex-col p-8">
       <div className="flex-1 flex flex-col justify-center space-y-10">
@@ -2199,19 +1969,18 @@ const DiyaRatingOverlay = ({ booking, onClose, onSuccess }: any) => {
           <p className="text-[10px] font-black uppercase tracking-[0.4em]">Système de Notation</p>
           <h3 className="text-4xl font-black tracking-tighter">Diya Rating</h3>
         </div>
-
+        
         <div className="space-y-8 bg-white/10 p-10 rounded-[48px] border border-white/20">
           <RatingSlider label="Global (Diya)" value={rating} onChange={setRating} />
           <RatingSlider label="Propreté" value={cleanliness} onChange={setCleanliness} />
           <RatingSlider label="Communication" value={communication} onChange={setCommunication} />
         </div>
 
-        <button
-          onClick={handleSubmit}
-          disabled={saving}
-          className="w-full py-6 bg-white text-awder-ocre rounded-full font-black text-lg shadow-2xl active:scale-95 transition-all disabled:opacity-60"
+        <button 
+          onClick={onSuccess}
+          className="w-full py-6 bg-white text-awder-ocre rounded-full font-black text-lg shadow-2xl active:scale-95 transition-all"
         >
-          {saving ? 'Enregistrement...' : 'Valider la Note Diya'}
+          Valider la Note Diya
         </button>
       </div>
     </div>
@@ -2279,86 +2048,76 @@ const NotificationOverlay = ({ notifications, onClose, onMarkRead }: any) => {
   );
 };
 
-const WalletOverlay = ({ wallet, transactions, onClose }: { wallet: any; transactions: any[]; onClose: () => void }) => {
-  const balance = wallet?.balance ?? 0;
-  const escrow = wallet?.escrow ?? 0;
-  const isIncoming = (t: any) => t.type === 'escrow_release' || t.type === 'refund';
-  return (
-    <div className="fixed inset-0 z-[300] bg-white flex flex-col">
-      <div className="p-8 flex justify-between items-center border-b border-slate-50">
-        <h3 className="text-3xl font-black text-awder-brun tracking-tighter">Mon Portefeuille</h3>
-        <button onClick={onClose} className="p-3 bg-slate-50 rounded-2xl text-slate-400">
-          <X className="w-6 h-6" />
-        </button>
-      </div>
-
-      <div className="flex-1 overflow-y-auto p-6 space-y-8">
-        {/* Main Balance Card */}
-        <div className="p-10 bg-awder-brun rounded-[40px] text-white shadow-2xl relative overflow-hidden group">
-          <div className="absolute top-0 right-0 w-32 h-32 bg-white/5 rounded-full -mr-16 -mt-16 blur-2xl group-hover:scale-150 transition-transform"></div>
-          <div className="relative space-y-4">
-            <p className="text-[10px] font-black text-white/40 uppercase tracking-[0.3em]">Solde Disponible</p>
-            <p className="text-4xl font-black tracking-tighter">{formatPrice(balance)} F</p>
-            {escrow > 0 && (
-              <div className="pt-2 flex items-center gap-2">
-                <ShieldCheck className="w-4 h-4 text-awder-gold" />
-                <span className="text-[10px] font-black text-awder-gold uppercase tracking-widest">
-                  Sira-Djou : {formatPrice(escrow)} F en escrow
-                </span>
-              </div>
-            )}
-            <div className="flex gap-2 pt-4">
-              <button disabled className="flex-1 py-4 bg-white/10 hover:bg-white/20 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all opacity-50 cursor-not-allowed">Recharger</button>
-              <button disabled className="flex-1 py-4 bg-awder-gold rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all opacity-50 cursor-not-allowed">Retirer</button>
-            </div>
+const WalletOverlay = ({ onClose }: { onClose: () => void }) => (
+  <div className="fixed inset-0 z-[300] bg-white flex flex-col">
+    <div className="p-8 flex justify-between items-center border-b border-slate-50">
+      <h3 className="text-3xl font-black text-awder-brun tracking-tighter">Mon Portefeuille</h3>
+      <button onClick={onClose} className="p-3 bg-slate-50 rounded-2xl text-slate-400">
+        <X className="w-6 h-6" />
+      </button>
+    </div>
+    
+    <div className="flex-1 overflow-y-auto p-6 space-y-8">
+      {/* Main Balance Card */}
+      <div className="p-10 bg-awder-brun rounded-[40px] text-white shadow-2xl relative overflow-hidden group">
+        <div className="absolute top-0 right-0 w-32 h-32 bg-white/5 rounded-full -mr-16 -mt-16 blur-2xl group-hover:scale-150 transition-transform"></div>
+        <div className="relative space-y-4">
+          <p className="text-[10px] font-black text-white/40 uppercase tracking-[0.3em]">Solde Total Disponible</p>
+          <p className="text-4xl font-black tracking-tighter">158 500 F</p>
+          <div className="flex gap-2 pt-4">
+            <button className="flex-1 py-4 bg-white/10 hover:bg-white/20 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all">Recharger</button>
+            <button className="flex-1 py-4 bg-awder-gold rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all">Retirer</button>
           </div>
         </div>
+      </div>
 
-        {/* Recent History */}
-        <div className="space-y-4">
-          <h4 className="font-black text-awder-brun text-lg px-2">Transactions Récentes</h4>
-          <div className="space-y-3">
-            {transactions.length === 0 && (
-              <div className="p-10 text-center text-slate-400 font-bold text-sm">Aucune transaction</div>
-            )}
-            {transactions.map((t: any) => (
-              <div key={t.id} className="p-5 bg-slate-50/50 rounded-2xl flex items-center justify-between">
-                <div className="space-y-0.5 min-w-0 pr-4">
-                  <p className="font-black text-awder-brun text-xs truncate">{t.description}</p>
-                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">
-                    {t.createdAt ? format(new Date(t.createdAt), 'dd MMM') : ''}
-                  </p>
+      {/* Linked Accounts */}
+      <div className="space-y-4">
+        <h4 className="font-black text-awder-brun text-lg px-2">Comptes Liés</h4>
+        <div className="grid grid-cols-1 gap-3">
+          {[
+            { label: 'Orange Money', color: 'bg-orange-500', balance: '45k F' },
+            { label: 'Moov Money', color: 'bg-blue-600', balance: '12k F' },
+            { label: 'Wave', color: 'bg-sky-400', balance: '101k F' }
+          ].map((acc, i) => (
+            <div key={`wallet-acc-${i}`} className="p-6 bg-white border border-slate-100 rounded-[32px] flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <div className={`w-12 h-12 ${acc.color} rounded-2xl`}></div>
+                <div>
+                  <p className="font-black text-awder-brun text-sm">{acc.label}</p>
+                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Connecté</p>
                 </div>
-                <p className={`font-black text-sm whitespace-nowrap ${isIncoming(t) ? 'text-green-500' : 'text-awder-ocre'}`}>
-                  {isIncoming(t) ? '+' : '-'}{formatPrice(t.amount)} F
-                </p>
               </div>
-            ))}
-          </div>
+              <p className="font-black text-awder-brun">{acc.balance}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Recent History */}
+      <div className="space-y-4">
+        <h4 className="font-black text-awder-brun text-lg px-2">Transactions Récentes</h4>
+        <div className="space-y-3">
+          {[
+            { label: 'Réservation Maison Koron', date: 'Hier', amount: '-45 000 F', type: 'out' },
+            { label: 'Transfert Wave', date: '28 Avr', amount: '+50 000 F', type: 'in' },
+            { label: 'Caution Libérée', date: '25 Avr', amount: '+15 000 F', type: 'in' }
+          ].map((t, i) => (
+            <div key={i} className="p-5 bg-slate-50/50 rounded-2xl flex items-center justify-between">
+              <div className="space-y-0.5">
+                <p className="font-black text-awder-brun text-xs">{t.label}</p>
+                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">{t.date}</p>
+              </div>
+              <p className={`font-black text-sm ${t.type === 'in' ? 'text-green-500' : 'text-awder-ocre'}`}>{t.amount}</p>
+            </div>
+          ))}
         </div>
       </div>
     </div>
-  );
-};
+  </div>
+);
 
-const TerriyanOverlay = ({ onClose }: { onClose: () => void }) => {
-  const { user } = useAuth();
-  const [copied, setCopied] = useState(false);
-  const referralCode = user
-    ? `AWDER-${user.uid.slice(0, 6).toUpperCase()}`
-    : 'AWDER-XXXXXX';
-
-  const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(referralCode);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      /* clipboard indisponible */
-    }
-  };
-
-  return (
+const TerriyanOverlay = ({ onClose }: { onClose: () => void }) => (
   <div className="fixed inset-0 z-[300] bg-white flex flex-col">
     <div className="p-8 flex justify-between items-center border-b border-slate-50">
       <div className="space-y-1">
@@ -2374,10 +2133,10 @@ const TerriyanOverlay = ({ onClose }: { onClose: () => void }) => {
       <div className="p-10 bg-awder-gold rounded-[40px] text-white shadow-2xl relative overflow-hidden">
         <Star className="absolute top-10 right-10 w-20 h-20 text-white/20 rotate-12" />
         <div className="space-y-4">
-          <p className="text-[10px] font-black uppercase tracking-[0.3em]">Programme de Parrainage</p>
-          <h4 className="text-4xl font-black tracking-tighter">Terriyan</h4>
+          <p className="text-[10px] font-black uppercase tracking-[0.3em]">Niveau Actuel</p>
+          <h4 className="text-4xl font-black tracking-tighter">Terriyan Koron</h4>
           <p className="text-xs font-medium opacity-80 leading-relaxed max-w-xs mx-auto sm:mx-0">
-            Partagez votre code et gagnez 5 000 F de crédit pour chaque ami qui réserve.
+            Vous avez parrainé 5 amis et économisé 25 000 F en frais de service !
           </p>
         </div>
       </div>
@@ -2385,13 +2144,8 @@ const TerriyanOverlay = ({ onClose }: { onClose: () => void }) => {
       <div className="p-8 bg-slate-50 rounded-[40px] space-y-6">
         <h4 className="font-black text-awder-brun text-lg tracking-tight">Votre Code de Parrainage</h4>
         <div className="p-6 bg-white border-2 border-dashed border-awder-gold/30 rounded-3xl flex items-center justify-between">
-          <span className="text-xl font-black text-awder-gold tracking-widest">{referralCode}</span>
-          <button
-            onClick={handleCopy}
-            className="p-3 bg-awder-gold text-white rounded-xl active:scale-90 transition-all font-black text-[10px] uppercase tracking-widest"
-          >
-            {copied ? 'Copié ✓' : 'Copier'}
-          </button>
+          <span className="text-xl font-black text-awder-gold tracking-widest">AWDER-BKO-2026</span>
+          <button className="p-3 bg-awder-gold text-white rounded-xl active:scale-90 transition-all font-black text-[10px] uppercase tracking-widest">Copier</button>
         </div>
         <p className="text-[10px] text-slate-400 font-medium leading-relaxed italic">
           Chaque ami qui réserve avec votre code vous offre 5 000 F de crédit Awder.
@@ -2411,118 +2165,54 @@ const TerriyanOverlay = ({ onClose }: { onClose: () => void }) => {
       </div>
     </div>
   </div>
-  );
-};
+);
 
-const PersonalInfoOverlay = ({ profile, onClose }: { profile: any, onClose: () => void }) => {
-  const { user } = useAuth();
-  const [displayName, setDisplayName] = useState(profile?.displayName ?? '');
-  const [phoneNumber, setPhoneNumber] = useState(profile?.phoneNumber ?? '');
-  const [bio, setBio] = useState(profile?.bio ?? '');
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
-
-  const handleSave = async () => {
-    if (!user) return;
-    setSaving(true);
-    setSaved(false);
-    try {
-      const uRef = doc(db, 'users', user.uid);
-      await updateDoc(uRef, {
-        displayName: displayName.trim(),
-        phoneNumber: phoneNumber.trim() || null,
-        bio: bio.trim() || null,
-        updatedAt: new Date().toISOString(),
-      });
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
-    } catch (e: any) {
-      alert(e.message ?? 'Erreur de mise à jour.');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 z-[300] bg-white flex flex-col">
-      <div className="p-8 flex justify-between items-center border-b border-slate-50">
-        <h3 className="text-3xl font-black text-awder-brun tracking-tighter">Profil & Infos</h3>
-        <button onClick={onClose} className="p-3 bg-slate-50 rounded-2xl text-slate-400">
-          <X className="w-6 h-6" />
-        </button>
-      </div>
-
-      <div className="flex-1 overflow-y-auto p-6 space-y-6">
-        <div className="flex flex-col items-center gap-4 pb-4">
-          <div className="w-24 h-24 bg-awder-brun rounded-full flex items-center justify-center text-white text-3xl font-black shadow-2xl relative">
-            {displayName?.charAt(0)?.toUpperCase() || 'A'}
-          </div>
-          <div className="text-center">
-            <h4 className="font-black text-xl text-awder-brun">{displayName || 'Utilisateur Awder'}</h4>
-            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest italic">{profile?.role === 'host' ? 'Hôte Koron' : 'Voyageur'}</p>
-          </div>
-        </div>
-
-        <div className="space-y-4">
-          <div className="p-6 bg-slate-50 rounded-[32px] space-y-2">
-            <div className="flex items-center gap-2 text-awder-ocre">
-              <User className="w-4 h-4" />
-              <p className="text-[10px] font-black uppercase tracking-widest opacity-60">Nom Complet</p>
-            </div>
-            <input
-              value={displayName}
-              onChange={(e) => setDisplayName(e.target.value)}
-              className="w-full bg-transparent outline-none font-black text-awder-brun text-lg"
-            />
-          </div>
-
-          <div className="p-6 bg-slate-50 rounded-[32px] space-y-2 opacity-70">
-            <div className="flex items-center gap-2 text-awder-ocre">
-              <Mail className="w-4 h-4" />
-              <p className="text-[10px] font-black uppercase tracking-widest opacity-60">Adresse Email</p>
-            </div>
-            <p className="font-black text-awder-brun text-lg">{profile?.email ?? 'Non renseigné (compte WhatsApp)'}</p>
-          </div>
-
-          <div className="p-6 bg-slate-50 rounded-[32px] space-y-2">
-            <div className="flex items-center gap-2 text-awder-ocre">
-              <Phone className="w-4 h-4" />
-              <p className="text-[10px] font-black uppercase tracking-widest opacity-60">Numéro de Téléphone</p>
-            </div>
-            <input
-              value={phoneNumber}
-              onChange={(e) => setPhoneNumber(e.target.value)}
-              placeholder="+223 70 00 00 00"
-              className="w-full bg-transparent outline-none font-black text-awder-brun text-lg"
-            />
-          </div>
-
-          <div className="p-6 bg-slate-50 rounded-[32px] space-y-2">
-            <div className="flex items-center gap-2 text-awder-ocre">
-              <FileText className="w-4 h-4" />
-              <p className="text-[10px] font-black uppercase tracking-widest opacity-60">Bio / Présentation</p>
-            </div>
-            <textarea
-              value={bio}
-              onChange={(e) => setBio(e.target.value)}
-              rows={3}
-              placeholder="Quelques mots sur vous..."
-              className="w-full bg-transparent outline-none font-black text-awder-brun text-base resize-none"
-            />
-          </div>
-        </div>
-
-        <button
-          onClick={handleSave}
-          disabled={saving}
-          className="w-full py-5 bg-awder-brun text-white rounded-[32px] font-black shadow-xl active:scale-95 transition-all disabled:opacity-60"
-        >
-          {saving ? 'Enregistrement...' : saved ? '✓ Enregistré' : 'Mettre à jour mon profil'}
-        </button>
-      </div>
+const PersonalInfoOverlay = ({ profile, onClose }: { profile: any, onClose: () => void }) => (
+  <div className="fixed inset-0 z-[300] bg-white flex flex-col">
+    <div className="p-8 flex justify-between items-center border-b border-slate-50">
+      <h3 className="text-3xl font-black text-awder-brun tracking-tighter">Profil & Infos</h3>
+      <button onClick={onClose} className="p-3 bg-slate-50 rounded-2xl text-slate-400">
+        <X className="w-6 h-6" />
+      </button>
     </div>
-  );
-};
+
+    <div className="flex-1 overflow-y-auto p-6 space-y-6">
+      <div className="flex flex-col items-center gap-4 pb-4">
+        <div className="w-24 h-24 bg-awder-brun rounded-full flex items-center justify-center text-white text-3xl font-black shadow-2xl relative">
+          {profile?.name?.charAt(0) || 'A'}
+          <button className="absolute bottom-0 right-0 p-2 bg-awder-gold text-white rounded-full border-4 border-white">
+            <Camera className="w-4 h-4" />
+          </button>
+        </div>
+        <div className="text-center">
+          <h4 className="font-black text-xl text-awder-brun">{profile?.name || 'Utilisateur Awder'}</h4>
+          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest italic">Membre depuis Avril 2026</p>
+        </div>
+      </div>
+
+      <div className="space-y-4">
+        {[
+          { label: 'Nom Complet', value: profile?.name, icon: <User className="w-4 h-4" /> },
+          { label: 'Adresse Email', value: profile?.email, icon: <Mail className="w-4 h-4" /> },
+          { label: 'Numéro de Téléphone', value: '+223 70 00 00 00', icon: <Phone className="w-4 h-4" /> },
+          { label: 'Bio / Présentation', value: 'Adore voyager et découvrir le Mali.', icon: <FileText className="w-4 h-4" /> }
+        ].map((field, i) => (
+          <div key={`profile-field-${i}`} className="p-6 bg-slate-50 rounded-[32px] space-y-2 border border-transparent hover:border-awder- gold transition-all">
+            <div className="flex items-center gap-2 text-awder-ocre">
+              {field.icon}
+              <p className="text-[10px] font-black uppercase tracking-widest opacity-60">{field.label}</p>
+            </div>
+            <p className="font-black text-awder-brun text-lg">{field.value || 'Non renseigné'}</p>
+          </div>
+        ))}
+      </div>
+
+      <button className="w-full py-5 bg-awder-brun text-white rounded-[32px] font-black shadow-xl active:scale-95 transition-all">
+        Mettre à jour mon profil
+      </button>
+    </div>
+  </div>
+);
 
 const SupportOverlay = ({ onClose }: { onClose: () => void }) => (
   <div className="fixed inset-0 z-[300] bg-awder-ocre/5 backdrop-blur-xl flex items-end sm:items-center justify-center">
@@ -2539,17 +2229,17 @@ const SupportOverlay = ({ onClose }: { onClose: () => void }) => (
         </div>
 
         <div className="grid grid-cols-1 gap-4">
-          <a href="https://wa.me/22370000000?text=Bonjour%20Awder%2C%20j%27ai%20besoin%20d%27aide" target="_blank" rel="noreferrer" className="w-full flex items-center gap-6 p-8 bg-awder-brun text-white rounded-[32px] shadow-2xl hover:scale-[1.02] active:scale-95 transition-all group">
+          <button className="w-full flex items-center gap-6 p-8 bg-awder-brun text-white rounded-[32px] shadow-2xl hover:scale-[1.02] active:scale-95 transition-all group">
             <div className="w-14 h-14 bg-white/10 rounded-2xl flex items-center justify-center text-awder-gold">
               <MessageSquare className="w-8 h-8" />
             </div>
             <div className="text-left">
-              <p className="font-black text-lg leading-tight">Chat WhatsApp</p>
+              <p className="font-black text-lg leading-tight">Démarrer un Chat</p>
               <p className="text-[10px] font-black text-white/40 uppercase tracking-widest mb-1">Temps moyen : 2 mins</p>
             </div>
-          </a>
+          </button>
 
-          <a href="tel:+22370000000" className="w-full flex items-center gap-6 p-8 bg-white border border-slate-100 rounded-[32px] shadow-sm hover:border-awder-ocre active:scale-95 transition-all group">
+          <button className="w-full flex items-center gap-6 p-8 bg-white border border-slate-100 rounded-[32px] shadow-sm hover:border-awder-ocre active:scale-95 transition-all group">
             <div className="w-14 h-14 bg-slate-50 rounded-2xl flex items-center justify-center text-awder-brun group-hover:bg-awder-ocre group-hover:text-white transition-all">
               <Phone className="w-8 h-8" />
             </div>
@@ -2557,9 +2247,9 @@ const SupportOverlay = ({ onClose }: { onClose: () => void }) => (
               <p className="font-black text-lg text-awder-brun leading-tight">Appel Téléphonique</p>
               <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest mb-1">+223 70 00 00 00</p>
             </div>
-          </a>
+          </button>
 
-          <a href="mailto:service@awder.com?subject=Support%20Awder" className="w-full flex items-center gap-6 p-8 bg-white border border-slate-100 rounded-[32px] shadow-sm hover:border-awder-ocre active:scale-95 transition-all group">
+          <button className="w-full flex items-center gap-6 p-8 bg-white border border-slate-100 rounded-[32px] shadow-sm hover:border-awder-ocre active:scale-95 transition-all group">
             <div className="w-14 h-14 bg-slate-50 rounded-2xl flex items-center justify-center text-awder-brun group-hover:bg-awder-ocre group-hover:text-white transition-all">
               <Mail className="w-8 h-8" />
             </div>
@@ -2567,7 +2257,7 @@ const SupportOverlay = ({ onClose }: { onClose: () => void }) => (
               <p className="font-black text-lg text-awder-brun leading-tight">Envoyer un Ticket</p>
               <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest mb-1">service@awder.com</p>
             </div>
-          </a>
+          </button>
         </div>
 
         <div className="p-8 bg-awder-gold text-white rounded-[40px] shadow-xl text-center flex flex-col items-center gap-3">
@@ -2581,13 +2271,12 @@ const SupportOverlay = ({ onClose }: { onClose: () => void }) => (
   </div>
 );
 
-const MessagesView = ({ myUid, onSelectChat }: { myUid: string | null; onSelectChat: (c: any) => void }) => {
-  const [conversations, setConversations] = useState<Conversation[]>([]);
-
-  React.useEffect(() => {
-    if (!myUid) return;
-    return listenToConversations(myUid, setConversations);
-  }, [myUid]);
+const MessagesView = ({ onSelectChat }: any) => {
+  const MOCK_CHATS = [
+    { id: '1', name: 'Moussa Traoré', lastMsg: 'I ni ce ! C est possible de...', time: '14:30', avatar: 'MT', unread: 2 },
+    { id: '2', name: 'Alou Maïga', lastMsg: 'Merci beaucoup !', time: 'Hier', avatar: 'AM', unread: 0 },
+    { id: '3', name: 'Fatou Diallo', lastMsg: 'A quelle heure pour le check-in ?', time: 'Hier', avatar: 'FD', unread: 0 },
+  ];
 
   return (
     <div className="px-6 py-10 space-y-10 pb-32">
@@ -2596,83 +2285,44 @@ const MessagesView = ({ myUid, onSelectChat }: { myUid: string | null; onSelectC
         <p className="text-xs text-slate-400 font-black uppercase tracking-[0.3em] italic">Discussions Awder</p>
       </div>
 
-      {!myUid && (
-        <div className="py-20 text-center">
-          <p className="text-slate-400 font-bold">Connectez-vous pour voir vos discussions</p>
-        </div>
-      )}
-
-      {myUid && conversations.length === 0 && (
-        <div className="py-20 text-center space-y-3">
-          <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mx-auto text-slate-300">
-            <MessageSquare className="w-8 h-8" />
-          </div>
-          <p className="text-slate-400 font-bold text-sm">Aucune discussion pour l'instant</p>
-          <p className="text-slate-300 text-[10px] font-bold uppercase tracking-widest">Lancez une conversation depuis une annonce</p>
-        </div>
-      )}
-
       <div className="space-y-2">
-        {conversations.map((conv) => {
-          const otherUid = conv.participants.find((p) => p !== myUid) ?? '';
-          const otherName = conv.participantNames?.[otherUid] ?? 'Utilisateur';
-          const avatar = otherName.slice(0, 2).toUpperCase();
-          return (
-          <button
-            key={conv.id}
-            onClick={() => onSelectChat({ id: conv.id, name: otherName, avatar, otherUid })}
+        {MOCK_CHATS.map((chat, i) => (
+          <button 
+            key={`chat-list-item-${chat.id}-${i}`} 
+            onClick={() => onSelectChat(chat)}
             className="w-full p-6 bg-white border border-slate-100 rounded-[32px] flex items-center gap-5 hover:border-awder-gold transition-all group"
           >
             <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center font-black text-awder-brun text-lg border border-slate-100 group-hover:bg-awder-gold/10 group-hover:text-awder-gold transition-colors">
-              {avatar}
+              {chat.avatar}
             </div>
-            <div className="flex-1 text-left space-y-1 min-w-0">
+            <div className="flex-1 text-left space-y-1">
               <div className="flex justify-between items-center">
-                <p className="font-black text-awder-brun truncate">{otherName}</p>
-                <p className="text-[9px] text-slate-300 font-bold uppercase tracking-widest whitespace-nowrap pl-2">
-                  {conv.lastMessageAt?.toDate ? format(conv.lastMessageAt.toDate(), 'HH:mm') : ''}
-                </p>
+                <p className="font-black text-awder-brun">{chat.name}</p>
+                <p className="text-[9px] text-slate-300 font-bold uppercase tracking-widest">{chat.time}</p>
               </div>
-              <p className="text-xs text-slate-400 font-medium truncate max-w-[220px]">{conv.lastMessage || 'Démarrez la conversation...'}</p>
+              <p className="text-xs text-slate-400 font-medium truncate max-w-[180px]">{chat.lastMsg}</p>
             </div>
+            {chat.unread > 0 && (
+              <div className="w-6 h-6 bg-awder-ocre rounded-full flex items-center justify-center text-[10px] font-black text-white shadow-lg shadow-awder-ocre/20">
+                {chat.unread}
+              </div>
+            )}
           </button>
-          );
-        })}
+        ))}
       </div>
     </div>
   );
 };
 
-const ChatOverlay = ({ chat, myUid, onClose }: { chat: any; myUid: string; onClose: () => void }) => {
+const ChatOverlay = ({ chat, messages, onClose, onSendMessage }: any) => {
   const [input, setInput] = useState('');
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [sending, setSending] = useState(false);
   const scrollRef = React.useRef<HTMLDivElement>(null);
-
-  React.useEffect(() => {
-    if (!chat?.id) return;
-    return listenToMessages(chat.id, setMessages);
-  }, [chat?.id]);
 
   React.useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages]);
-
-  const handleSend = async () => {
-    const text = input.trim();
-    if (!text || sending) return;
-    setSending(true);
-    try {
-      await sendChatMessage(chat.id, myUid, text);
-      setInput('');
-    } catch (e: any) {
-      alert(e.message ?? 'Échec de l\'envoi.');
-    } finally {
-      setSending(false);
-    }
-  };
 
   return (
     <div className="fixed inset-0 z-[130] bg-white flex flex-col">
@@ -2685,58 +2335,59 @@ const ChatOverlay = ({ chat, myUid, onClose }: { chat: any; myUid: string; onClo
             <p className="font-black text-awder-brun leading-none">{chat.name}</p>
             <div className="flex items-center gap-1.5 mt-1">
               <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></div>
-              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Koron Sécurité Active</p>
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">En ligne</p>
             </div>
           </div>
         </div>
+        <button className="p-3 bg-slate-50 rounded-2xl">
+          <Settings className="w-5 h-5 text-slate-400" />
+        </button>
       </header>
 
       <main ref={scrollRef} className="flex-1 overflow-y-auto p-6 space-y-6 bg-awder-offwhite">
-        {messages.length === 0 ? (
-          <div className="flex flex-col items-center py-10 space-y-4">
-            <div className="w-20 h-20 bg-white border border-slate-100 rounded-full flex items-center justify-center text-2xl font-black text-awder-brun">
-              {chat.avatar}
-            </div>
-            <div className="text-center space-y-1">
-              <p className="text-sm font-black text-awder-brun">C&apos;est le début de votre conversation avec {chat.name}</p>
-              <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest italic">Envoyez le premier message</p>
+        <div className="flex flex-col items-center py-10 space-y-4">
+          <div className="w-20 h-20 bg-white border border-slate-100 rounded-full flex items-center justify-center text-2xl font-black text-awder-brun">
+            {chat.avatar}
+          </div>
+          <div className="text-center space-y-1">
+            <p className="text-sm font-black text-awder-brun">C&apos;est le début de votre conversation avec {chat.name}</p>
+            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest italic">Koron Sécurité Active</p>
+          </div>
+        </div>
+
+        {messages.map((m: any, i: number) => (
+          <div key={`chat-msg-${m.id}-${i}`} className={`flex ${m.senderId === 'me' ? 'justify-end' : 'justify-start'}`}>
+            <div className={`max-w-[80%] p-5 rounded-[28px] ${
+              m.senderId === 'me' 
+                ? 'bg-awder-brun text-white rounded-tr-none shadow-xl shadow-awder-brun/10' 
+                : 'bg-white text-awder-brun rounded-tl-none border border-slate-100'
+            }`}>
+              <p className="text-sm font-medium leading-relaxed">{m.text}</p>
+              <p className={`text-[8px] font-black uppercase tracking-widest mt-2 ${m.senderId === 'me' ? 'text-white/40' : 'text-slate-300'}`}>
+                {format(new Date(m.timestamp), 'HH:mm')}
+              </p>
             </div>
           </div>
-        ) : (
-          messages.map((m) => {
-            const isMine = m.senderId === myUid;
-            const when = m.createdAt?.toDate ? format(m.createdAt.toDate(), 'HH:mm') : '';
-            return (
-              <div key={m.id} className={`flex ${isMine ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-[80%] p-5 rounded-[28px] ${
-                  isMine
-                    ? 'bg-awder-brun text-white rounded-tr-none shadow-xl shadow-awder-brun/10'
-                    : 'bg-white text-awder-brun rounded-tl-none border border-slate-100'
-                }`}>
-                  <p className="text-sm font-medium leading-relaxed">{m.text}</p>
-                  <p className={`text-[8px] font-black uppercase tracking-widest mt-2 ${isMine ? 'text-white/40' : 'text-slate-300'}`}>
-                    {when}
-                  </p>
-                </div>
-              </div>
-            );
-          })
-        )}
+        ))}
       </main>
 
       <footer className="p-6 bg-white border-t border-slate-100 sticky bottom-0">
         <div className="relative flex items-center gap-3">
-          <input
+          <input 
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            onKeyPress={(e) => { if (e.key === 'Enter') handleSend(); }}
-            placeholder="Écrivez votre message..."
+            onKeyPress={(e) => e.key === 'Enter' && (onSendMessage(input), setInput(''))}
+            placeholder="Écrivez votre message..." 
             className="flex-1 p-5 bg-slate-50 border border-slate-100 rounded-3xl outline-none focus:border-awder-gold font-bold text-sm text-awder-brun pr-16"
           />
-          <button
-            onClick={handleSend}
-            disabled={sending || !input.trim()}
-            className="absolute right-2 p-4 bg-awder-ocre text-white rounded-2xl shadow-lg shadow-awder-ocre/20 active:scale-90 transition-all disabled:opacity-50"
+          <button 
+            onClick={() => {
+              if (input.trim()) {
+                onSendMessage(input);
+                setInput('');
+              }
+            }}
+            className="absolute right-2 p-4 bg-awder-ocre text-white rounded-2xl shadow-lg shadow-awder-ocre/20 active:scale-90 transition-all"
           >
             <Send className="w-5 h-5" />
           </button>
@@ -2746,40 +2397,33 @@ const ChatOverlay = ({ chat, myUid, onClose }: { chat: any; myUid: string; onClo
   );
 };
 
-const AddListingOverlay = ({ onClose, onSuccess, onRequireKYC }: any) => {
+const AddListingOverlay = ({ onClose, onSuccess }: any) => {
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [images, setImages] = useState<string[]>([]);
-  const [imageFiles, setImageFiles] = useState<File[]>([]);
   const [listingData, setListingData] = useState({
     title: '',
-    description: '',
     address: '',
     city: '',
     neighborhood: '',
     price: 45000,
     cautionAmount: 15000,
-    type: 'accommodation' as 'accommodation' | 'event',
-    amenities: [] as string[],
+    type: 'accommodation' as 'accommodation' | 'event'
   });
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (files) {
-      const arr = Array.from(files);
-      const previews = arr.map(file => URL.createObjectURL(file));
-      setImages(prev => [...prev, ...previews]);
-      setImageFiles(prev => [...prev, ...arr]);
+      const newImages = Array.from(files).map(file => URL.createObjectURL(file));
+      setImages(prev => [...prev, ...newImages]);
     }
   };
 
   const removeImage = (index: number) => {
     setImages(prev => prev.filter((_, i) => i !== index));
-    setImageFiles(prev => prev.filter((_, i) => i !== index));
   };
 
   const { profile } = useAuth();
-  const [showKYCGate, setShowKYCGate] = useState(false);
 
   // Pre-fill host data asynchronously to avoid cascading renders
   React.useEffect(() => {
@@ -2796,48 +2440,26 @@ const AddListingOverlay = ({ onClose, onSuccess, onRequireKYC }: any) => {
   }, [profile]);
 
   const handlePublish = async () => {
-    if (!profile || !auth.currentUser) return;
-    // Vérifier KYC avant publication — ouvrir l'IdentityOverlay via callback parent
-    if (!profile.idVerificationStatus || profile.idVerificationStatus === 'none' || profile.idVerificationStatus === 'rejected') {
-      onRequireKYC?.();
-      return;
-    }
+    if (!profile) return;
     setLoading(true);
     try {
-      // 1. Create the listing document first (without images) to get an ID
-      const baseData = {
-        hostId: auth.currentUser.uid,
+      const finalData = {
+        hostId: auth.currentUser?.uid,
         title: listingData.title || (listingData.type === 'accommodation' ? 'Logement Premium' : 'Espace Événementiel'),
-        description: listingData.description || '',
         price: Number(listingData.price),
-        cautionAmount: Math.min(Math.round(Number(listingData.price) * 0.20), 50000),
-        location: {
-          city: listingData.city || 'Bamako',
+        cautionAmount: Number(listingData.cautionAmount),
+        location: { 
+          city: listingData.city || 'Bamako', 
           address: listingData.address || 'ACI 2000',
           neighborhood: listingData.neighborhood || ''
         },
         type: listingData.type,
         pricingType: listingData.type === 'accommodation' ? 'nightly' : 'hourly',
-        amenities: listingData.amenities,
-        images: [] as string[],
-        isVerified: false,
-        isActive: false,
-        moderationStatus: "pending_review",
+        images: images.length > 0 ? images : ['https://picsum.photos/seed/new/800/600'],
+        isVerified: true,
         createdAt: new Date().toISOString(),
       };
-      const docRef = await addDoc(collection(db, 'listings'), baseData);
-
-      // 2. Upload images to Storage and update the listing with real URLs
-      let imageUrls: string[] = [];
-      if (imageFiles.length > 0) {
-        imageUrls = await uploadListingImages(imageFiles, docRef.id);
-      } else {
-        imageUrls = ['https://picsum.photos/seed/new/800/600'];
-      }
-
-      const { updateDoc } = await import('firebase/firestore');
-      await updateDoc(docRef, { images: imageUrls });
-
+      await addDoc(collection(db, 'listings'), finalData);
       onSuccess();
     } catch (e) {
       handleFirestoreError(e, OperationType.CREATE, 'listings');
@@ -2853,7 +2475,7 @@ const AddListingOverlay = ({ onClose, onSuccess, onRequireKYC }: any) => {
           <ChevronLeft className="w-6 h-6 text-awder-brun" />
         </button>
         <div className="flex flex-col items-center">
-          <p className="text-[10px] font-black text-awder-gold uppercase tracking-[0.3em]">Étape {step} / 5</p>
+          <p className="text-[10px] font-black text-awder-gold uppercase tracking-[0.3em]">Étape {step} / 4</p>
           <h2 className="text-sm font-black text-awder-brun tracking-tight uppercase">Nouvelle Annonce</h2>
         </div>
         <div className="w-10"></div>
@@ -2949,54 +2571,8 @@ const AddListingOverlay = ({ onClose, onSuccess, onRequireKYC }: any) => {
           )}
 
           {step === 3 && (
-            <motion.div
-              key="step3-details"
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-              className="space-y-8"
-            >
-              <div className="space-y-2">
-                <h3 className="text-3xl font-black text-awder-brun leading-tight tracking-tighter">Racontez <span className="text-awder-ocre">votre lieu</span>.</h3>
-                <p className="text-sm text-slate-400 font-bold leading-relaxed">Une bonne description double les réservations.</p>
-              </div>
-              <div className="space-y-4">
-                <textarea
-                  placeholder="Décrivez votre espace, son ambiance, ses points forts..."
-                  value={listingData.description}
-                  onChange={(e) => setListingData({ ...listingData, description: e.target.value })}
-                  rows={6}
-                  className="w-full p-6 bg-white border border-slate-100 rounded-3xl outline-none focus:border-awder-gold font-bold text-awder-brun resize-none"
-                />
-                <div className="space-y-3">
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Équipements</p>
-                  <div className="flex flex-wrap gap-2">
-                    {['Wifi', 'Climatisation', 'Piscine', 'Parking', 'Cuisine équipée', 'TV', 'Sécurité 24/7', 'Groupe Électrogène', 'Eau chaude', 'Sono', 'Éclairage', 'Projecteur HD', 'Visioconférence'].map((a) => {
-                      const selected = listingData.amenities.includes(a);
-                      return (
-                        <button
-                          key={a}
-                          type="button"
-                          onClick={() => setListingData(prev => ({
-                            ...prev,
-                            amenities: selected ? prev.amenities.filter(x => x !== a) : [...prev.amenities, a]
-                          }))}
-                          className={`px-4 py-2 rounded-full text-xs font-black border-2 transition-all ${selected ? 'bg-awder-gold border-awder-gold text-white' : 'bg-white border-slate-100 text-slate-400'}`}
-                        >
-                          {a}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-                <button onClick={() => setStep(4)} className="w-full py-6 bg-awder-brun text-white rounded-full font-black text-lg shadow-xl shadow-awder-brun/20">Continuer</button>
-              </div>
-            </motion.div>
-          )}
-
-          {step === 4 && (
-            <motion.div
-              key="step4-photos"
+            <motion.div 
+              key="step3"
               initial={{ opacity: 0, x: 20 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -20 }}
@@ -3016,11 +2592,12 @@ const AddListingOverlay = ({ onClose, onSuccess, onRequireKYC }: any) => {
                 
                 {images.map((img, idx) => (
                   <div key={`add-listing-img-${idx}`} className="relative aspect-square rounded-[32px] overflow-hidden group">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={img}
-                      alt="Aperçu"
-                      className="absolute inset-0 w-full h-full object-cover"
+                    <Image 
+                      src={img} 
+                      alt="Preview" 
+                      fill 
+                      sizes="(max-width: 768px) 50vw, 200px"
+                      className="object-cover" 
                     />
                     <button 
                       onClick={() => removeImage(idx)}
@@ -3032,8 +2609,8 @@ const AddListingOverlay = ({ onClose, onSuccess, onRequireKYC }: any) => {
                 ))}
               </div>
 
-              <button
-                onClick={() => setStep(5)}
+              <button 
+                onClick={() => setStep(4)} 
                 disabled={images.length === 0}
                 className={`w-full py-6 rounded-full font-black text-lg transition-all ${images.length > 0 ? 'bg-awder-brun text-white shadow-xl shadow-awder-brun/20' : 'bg-slate-100 text-slate-300'}`}
               >
@@ -3042,9 +2619,9 @@ const AddListingOverlay = ({ onClose, onSuccess, onRequireKYC }: any) => {
             </motion.div>
           )}
 
-          {step === 5 && (
-            <motion.div
-              key="step5-pricing"
+          {step === 4 && (
+            <motion.div 
+              key="step4"
               initial={{ opacity: 0, x: 20 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -20 }}
@@ -3066,75 +2643,27 @@ const AddListingOverlay = ({ onClose, onSuccess, onRequireKYC }: any) => {
                     />
                   </div>
                   <div className="pt-4 border-t border-slate-50 space-y-1">
-                    <div className="flex items-center gap-2">
-                      <p className="text-[10px] font-black text-awder-ocre uppercase tracking-widest">Garantie Sira-Djou</p>
-                      <span className="text-[9px] bg-awder-ocre/10 text-awder-ocre font-black px-2 py-0.5 rounded-full uppercase tracking-widest">Auto 20%</span>
-                    </div>
-                    <p className="w-full text-2xl font-black text-awder-ocre">{formatPrice(Math.min(Math.round(Number(listingData.price) * 0.20), 50000))} FCFA</p>
-                    <p className="text-[10px] text-slate-400 font-bold leading-relaxed mt-1">Calculée automatiquement — restituée au voyageur 24h après son départ.</p>
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Caution Sira-Djou (FCFA)</p>
+                    <input 
+                      type="number" 
+                      value={listingData.cautionAmount}
+                      onChange={(e) => setListingData({ ...listingData, cautionAmount: Number(e.target.value) })}
+                      className="w-full text-2xl font-black text-awder-ocre bg-transparent outline-none" 
+                    />
                   </div>
                 </div>
-                {/* Brouillon ou Publication selon statut KYC */}
-                <div className="space-y-3">
-                  {/* Bouton Sauvegarder en brouillon — toujours disponible */}
-                  <button
-                    onClick={async () => {
-                      if (!profile || !auth.currentUser) return;
-                      setLoading(true);
-                      try {
-                        const baseData = {
-                          hostId: auth.currentUser.uid,
-                          title: listingData.title || 'Mon annonce',
-                          description: listingData.description || '',
-                          price: Number(listingData.price),
-                          cautionAmount: Math.min(Math.round(Number(listingData.price) * 0.20), 50000),
-                          location: { city: listingData.city || 'Bamako', address: listingData.address || '', neighborhood: listingData.neighborhood || '' },
-                          type: listingData.type,
-                          pricingType: listingData.type === 'accommodation' ? 'nightly' : 'hourly',
-                          amenities: listingData.amenities,
-                          images: imageFiles.length > 0 ? [] : ['https://picsum.photos/seed/draft/800/600'],
-                          isVerified: false,
-                          isActive: false,
-                          moderationStatus: 'draft',
-                          createdAt: new Date().toISOString(),
-                        };
-                        const { addDoc, collection } = await import('firebase/firestore');
-                        const docRef = await addDoc(collection(db, 'listings'), baseData);
-                        if (imageFiles.length > 0) {
-                          const urls = await uploadListingImages(imageFiles, docRef.id);
-                          const { updateDoc } = await import('firebase/firestore');
-                          await updateDoc(docRef, { images: urls });
-                        }
-                        onSuccess();
-                      } catch (e: any) {
-                        handleFirestoreError(e, OperationType.CREATE, 'listings');
-                      } finally {
-                        setLoading(false);
-                      }
-                    }}
-                    disabled={loading}
-                    className="w-full py-5 bg-white border-2 border-awder-brun text-awder-brun rounded-full font-black text-sm flex items-center justify-center gap-3 active:scale-95 transition-all"
-                  >
-                    <FileText className="w-5 h-5" />
-                    Sauvegarder en brouillon
-                  </button>
-
-                  {/* Bouton Publier — déclenche KYC si non vérifié */}
-                  <button
-                    onClick={handlePublish}
-                    disabled={loading}
-                    className="w-full py-6 bg-awder-ocre text-white rounded-full font-black text-lg shadow-2xl shadow-awder-ocre/30 flex items-center justify-center gap-3 active:scale-95 transition-all"
-                  >
-                    {loading
-                      ? <div className="w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      : <><CheckCircle2 className="w-6 h-6" /> Publier l&apos;annonce</>
-                    }
-                  </button>
-
-                  <p className="text-[10px] text-center text-slate-400 font-bold uppercase tracking-widest">
-                    La publication nécessite une vérification d&apos;identité (2 min)
-                  </p>
-                </div>
+                <button 
+                  onClick={handlePublish}
+                  disabled={loading}
+                  className="w-full py-6 bg-awder-ocre text-white rounded-full font-black text-lg shadow-2xl shadow-awder-ocre/30 flex items-center justify-center gap-3"
+                >
+                  {loading ? <div className="w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin"></div> : (
+                    <>
+                      <CheckCircle2 className="w-6 h-6" />
+                      Publier l&apos;annonce
+                    </>
+                  )}
+                </button>
               </div>
             </motion.div>
           )}
