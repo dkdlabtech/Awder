@@ -6,6 +6,8 @@ import firebaseConfig from '../firebase-applet-config.json';
 const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 export const db = getFirestore(app, (firebaseConfig as any).firestoreDatabaseId);
 export const auth = getAuth(app);
+// Note: les images sont stockées sur Cloudinary (voir lib/upload.ts),
+// pas sur Firebase Storage — ce qui évite le plan Blaze payant.
 
 async function testConnection() {
   try {
