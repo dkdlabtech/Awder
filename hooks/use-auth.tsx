@@ -1,26 +1,26 @@
 'use client';
 
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { 
-  onAuthStateChanged, 
-  signInWithPopup, 
-  GoogleAuthProvider, 
+import {
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  updateProfile,
+  signInWithCustomToken,
   signOut,
   User as FirebaseUser,
-  RecaptchaVerifier,
-  signInWithPhoneNumber,
-  ConfirmationResult
 } from 'firebase/auth';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '@/lib/firebase';
 
 interface AuthContextType {
   user: FirebaseUser | null;
   profile: any | null;
   loading: boolean;
-  signIn: () => Promise<void>;
-  signInWithPhone: (phoneNumber: string, recaptchaContainerId: string) => Promise<ConfirmationResult>;
-  verifyCode: (confirmationResult: ConfirmationResult, code: string) => Promise<void>;
+  signUpWithEmail: (email: string, password: string, displayName: string) => Promise<void>;
+  signInWithEmail: (email: string, password: string) => Promise<void>;
+  sendWhatsAppOtp: (phoneNumber: string) => Promise<{ devCode?: string }>;
+  verifyWhatsAppOtp: (phoneNumber: string, code: string) => Promise<void>;
   logout: () => Promise<void>;
 }
 
@@ -28,57 +28,26 @@ const AuthContext = createContext<AuthContextType>({
   user: null,
   profile: null,
   loading: true,
-  signIn: async () => {},
-  signInWithPhone: async () => ({} as ConfirmationResult),
-  verifyCode: async () => {},
+  signUpWithEmail: async () => {},
+  signInWithEmail: async () => {},
+  sendWhatsAppOtp: async () => ({}),
+  verifyWhatsAppOtp: async () => {},
   logout: async () => {},
 });
 
-enum OperationType {
-  CREATE = 'create',
-  UPDATE = 'update',
-  DELETE = 'delete',
-  LIST = 'list',
-  GET = 'get',
-  WRITE = 'write',
-}
-
-interface FirestoreErrorInfo {
-  error: string;
-  operationType: OperationType;
-  path: string | null;
-  authInfo: {
-    userId?: string | null;
-    email?: string | null;
-    emailVerified?: boolean | null;
-    isAnonymous?: boolean | null;
-    tenantId?: string | null;
-    providerInfo?: {
-      providerId?: string | null;
-      email?: string | null;
-    }[];
-  }
-}
-
-function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
-  const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
-    authInfo: {
-      userId: auth.currentUser?.uid,
-      email: auth.currentUser?.email,
-      emailVerified: auth.currentUser?.emailVerified,
-      isAnonymous: auth.currentUser?.isAnonymous,
-      tenantId: auth.currentUser?.tenantId,
-      providerInfo: auth.currentUser?.providerData?.map(provider => ({
-        providerId: provider.providerId,
-        email: provider.email,
-      })) || []
-    },
-    operationType,
-    path
-  }
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
-  throw new Error(JSON.stringify(errInfo));
+export function authErrorToFrench(code: string): string {
+  const map: Record<string, string> = {
+    'auth/email-already-in-use': 'Cet email est déjà utilisé.',
+    'auth/wrong-password': 'Mot de passe incorrect.',
+    'auth/invalid-credential': 'Email ou mot de passe incorrect.',
+    'auth/user-not-found': 'Aucun compte avec cet email.',
+    'auth/weak-password': 'Le mot de passe doit contenir au moins 6 caractères.',
+    'auth/invalid-email': 'Adresse email invalide.',
+    'auth/too-many-requests': 'Trop de tentatives. Réessayez dans quelques minutes.',
+    'auth/network-request-failed': 'Erreur réseau. Vérifiez votre connexion.',
+    'auth/user-disabled': 'Ce compte a été désactivé.',
+  };
+  return map[code] ?? 'Une erreur est survenue. Réessayez.';
 }
 
 export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
@@ -87,40 +56,43 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      setUser(user);
-      if (user) {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      setUser(firebaseUser);
+      if (firebaseUser) {
         try {
-          // Fetch or create profile
-          const docRef = doc(db, 'users', user.uid);
-          const docSnap = await getDoc(docRef);
-          
-          if (docSnap.exists()) {
-            setProfile(docSnap.data());
+          const docRef = doc(db, 'users', firebaseUser.uid);
+          const snap = await getDoc(docRef);
+
+          if (snap.exists()) {
+            setProfile(snap.data());
           } else {
+            // WhatsApp users have uid prefixed with "wa_"
+            const isWhatsApp = firebaseUser.uid.startsWith('wa_');
+            const phoneFromUid = isWhatsApp ? '+' + firebaseUser.uid.slice(3) : null;
+
             const newProfile = {
-              displayName: user.displayName,
-              email: user.email,
+              displayName: firebaseUser.displayName ?? phoneFromUid ?? 'Utilisateur Awder',
               role: 'guest',
               isVerified: false,
-              createdAt: new Date().toISOString(),
+              createdAt: serverTimestamp(),
+              ...(isWhatsApp
+                ? { phoneNumber: phoneFromUid }
+                : { email: firebaseUser.email }),
             };
+
             await setDoc(docRef, newProfile);
-            
-            // ISI: Initialize Wallet
-            const walletRef = doc(db, 'wallets', user.uid);
-            await setDoc(walletRef, {
-              userId: user.uid,
+            await setDoc(doc(db, 'wallets', firebaseUser.uid), {
+              userId: firebaseUser.uid,
               balance: 0,
               escrow: 0,
               currency: 'XOF',
-              updatedAt: new Date().toISOString()
+              updatedAt: serverTimestamp(),
             });
 
-            setProfile(newProfile);
+            setProfile({ ...newProfile, createdAt: new Date().toISOString() });
           }
         } catch (error) {
-          handleFirestoreError(error, OperationType.GET, `users/${user.uid}`);
+          console.error('Profile sync error:', error);
         }
       } else {
         setProfile(null);
@@ -131,46 +103,45 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     return () => unsubscribe();
   }, []);
 
-  const signIn = async () => {
-    const provider = new GoogleAuthProvider();
-    try {
-      await signInWithPopup(auth, provider);
-    } catch (error) {
-      console.error("Error signing in", error);
-    }
+  const signUpWithEmail = async (email: string, password: string, displayName: string) => {
+    const cred = await createUserWithEmailAndPassword(auth, email, password);
+    await updateProfile(cred.user, { displayName });
   };
 
-  const signInWithPhone = async (phoneNumber: string, recaptchaContainerId: string) => {
-    try {
-      const recaptchaVerifier = new RecaptchaVerifier(auth, recaptchaContainerId, {
-        size: 'invisible',
-      });
-      return await signInWithPhoneNumber(auth, phoneNumber, recaptchaVerifier);
-    } catch (error) {
-      console.error("Error signing in with phone", error);
-      throw error;
-    }
+  const signInWithEmail = async (email: string, password: string) => {
+    await signInWithEmailAndPassword(auth, email, password);
   };
 
-  const verifyCode = async (confirmationResult: ConfirmationResult, code: string) => {
-    try {
-      await confirmationResult.confirm(code);
-    } catch (error) {
-      console.error("Error verifying code", error);
-      throw error;
-    }
+  const sendWhatsAppOtp = async (phoneNumber: string): Promise<{ devCode?: string }> => {
+    const res = await fetch('/api/auth/whatsapp/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phoneNumber }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error ?? 'Erreur d\'envoi.');
+    return { devCode: data.devCode };
+  };
+
+  const verifyWhatsAppOtp = async (phoneNumber: string, code: string) => {
+    const res = await fetch('/api/auth/whatsapp/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phoneNumber, code }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error ?? 'Code invalide.');
+    await signInWithCustomToken(auth, data.customToken);
   };
 
   const logout = async () => {
-    try {
-      await signOut(auth);
-    } catch (error) {
-      console.error("Error signing out", error);
-    }
+    await signOut(auth);
   };
 
   return (
-    <AuthContext.Provider value={{ user, profile, loading, signIn, signInWithPhone, verifyCode, logout }}>
+    <AuthContext.Provider
+      value={{ user, profile, loading, signUpWithEmail, signInWithEmail, sendWhatsAppOtp, verifyWhatsAppOtp, logout }}
+    >
       {children}
     </AuthContext.Provider>
   );
