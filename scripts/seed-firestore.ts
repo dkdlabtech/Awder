@@ -6,36 +6,46 @@
  * Les users/wallets/bookings sont créés automatiquement par l'app.
  */
 
-import { initializeApp, cert, getApp, getApps, App } from "firebase-admin/app";
+import { initializeApp, cert, getApps, App } from "firebase-admin/app";
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import * as fs from "fs";
 import * as path from "path";
 
-// Charge le service account JSON directement
-const serviceAccountPath = path.join(
-  process.env.GOOGLE_APPLICATION_CREDENTIALS ??
-    path.join(
-      __dirname,
-      "..",
-      "..",
-      "..",
-      "gen-lang-client-0375007552-firebase-adminsdk-fbsvc-136ad5eadb.json",
-    ),
-);
+// Charge .env.local manuellement (tsx ne le fait pas auto)
+const envPath = path.join(__dirname, "..", ".env.local");
+if (fs.existsSync(envPath)) {
+  const envContent = fs.readFileSync(envPath, "utf8");
+  envContent.split("\n").forEach((line) => {
+    const m = line.match(/^([A-Z_]+)="?(.*?)"?$/);
+    if (m && !process.env[m[1]]) {
+      process.env[m[1]] = m[2].replace(/\\n/g, "\n");
+    }
+  });
+}
 
-if (!fs.existsSync(serviceAccountPath)) {
-  console.error("❌ Service account JSON introuvable à:", serviceAccountPath);
-  console.error(
-    "   Exportez GOOGLE_APPLICATION_CREDENTIALS=<chemin/vers/le/fichier.json>",
-  );
+// Utilise les credentials Firebase Admin depuis .env.local
+const projectId = process.env.FIREBASE_ADMIN_PROJECT_ID;
+const clientEmail = process.env.FIREBASE_ADMIN_CLIENT_EMAIL;
+const privateKey = process.env.FIREBASE_ADMIN_PRIVATE_KEY;
+
+if (!projectId || !clientEmail || !privateKey) {
+  console.error("❌ Variables Firebase Admin manquantes dans .env.local");
+  console.error("   Vérifiez FIREBASE_ADMIN_PROJECT_ID, FIREBASE_ADMIN_CLIENT_EMAIL, FIREBASE_ADMIN_PRIVATE_KEY");
   process.exit(1);
 }
 
-const serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, "utf8"));
-
 const app: App =
   getApps().find((a) => a.name === "seed") ??
-  initializeApp({ credential: cert(serviceAccount) }, "seed");
+  initializeApp(
+    {
+      credential: cert({
+        projectId,
+        clientEmail,
+        privateKey,
+      }),
+    },
+    "seed"
+  );
 
 const db = getFirestore(app, "ai-studio-2bb09865-e5b1-44ca-8c73-eaf4dcf87aef");
 
@@ -201,7 +211,14 @@ async function seed() {
   let created = 0;
   for (const listing of listings) {
     try {
-      const ref = await db.collection("listings").add(listing);
+      const listingWithMeta = {
+        ...listing,
+        // Champs requis par les règles Firestore + visibilité publique
+        moderationStatus: "approved" as const,
+        isActive: true,
+        reviewCount: 0,
+      };
+      const ref = await db.collection("listings").add(listingWithMeta);
       console.log(`✅ Listing créé: "${listing.title}" → ID: ${ref.id}`);
       created++;
     } catch (err) {

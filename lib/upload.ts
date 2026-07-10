@@ -55,6 +55,32 @@ async function cloudinaryUpload(file: File, folder: string): Promise<string> {
   return data.secure_url as string;
 }
 
+/**
+ * Upload un fichier audio (note vocale d'itinéraire) vers Cloudinary.
+ * Utilise l'endpoint /auto/upload qui accepte audio + vidéo.
+ */
+export async function uploadVoiceNote(file: Blob, listingId: string): Promise<string> {
+  assertConfigured();
+  if (file.size > 10 * 1024 * 1024) {
+    throw new Error('Note vocale trop volumineuse (max 10 Mo).');
+  }
+  const form = new FormData();
+  form.append('file', file);
+  form.append('upload_preset', UPLOAD_PRESET as string);
+  form.append('folder', `awder/listings/${listingId}/voice`);
+
+  const res = await fetch(
+    `https://api.cloudinary.com/v1_1/${CLOUD_NAME}/auto/upload`,
+    { method: 'POST', body: form }
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err?.error?.message ?? "Échec de l'upload de la note vocale.");
+  }
+  const data = await res.json();
+  return data.secure_url as string;
+}
+
 /** Upload une image d'annonce. */
 export async function uploadListingImage(file: File, listingId: string): Promise<string> {
   return cloudinaryUpload(file, `awder/listings/${listingId}`);

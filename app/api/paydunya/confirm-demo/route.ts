@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { adminDb } from '@/lib/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
+import { notifyUserWhatsApp } from '@/lib/whatsapp';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,6 +28,7 @@ export async function POST(req: NextRequest) {
 
     const db = adminDb();
     const bookingRef = db.collection('bookings').doc(bookingId);
+    let bookingForNotif: any = null;
 
     await db.runTransaction(async (tx) => {
       const snap = await tx.get(bookingRef);
@@ -74,7 +76,18 @@ export async function POST(req: NextRequest) {
         read: false,
         createdAt: new Date().toISOString(),
       });
+
+      bookingForNotif = b;
     });
+
+    // ✨ Notifications WhatsApp transactionnelles (best-effort, hors transaction)
+    if (bookingForNotif) {
+      const b = bookingForNotif;
+      await Promise.allSettled([
+        notifyUserWhatsApp(b.hostId, `Awder : nouveau paiement reçu pour "${b.listingTitle}". Les fonds sont sécurisés (Sira-Djou).`),
+        notifyUserWhatsApp(b.guestId, `Awder : votre réservation "${b.listingTitle}" est confirmée ✅. Bon séjour !`),
+      ]);
+    }
 
     return NextResponse.json({ success: true });
   } catch (e: any) {

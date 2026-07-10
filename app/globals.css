@@ -1,8 +1,90 @@
 @import "tailwindcss";
 
 @theme {
-  --color-awder-gold: #C2A350;
+  /* ===== Palette « Terres du Sahel » ===== */
+  /* Ocre / terre cuite — ACTION uniquement : CTA, prix, wordmark « Awder » */
   --color-awder-ocre: #A64B2A;
-  --color-awder-offwhite: #FAF9F6;
+  --color-awder-ocre-deep: #8B3C20;
+  /* Or / ambre — CONFIANCE uniquement : vérifié, garanties, Koron */
+  --color-awder-gold: #C2A350;
+  --color-awder-gold-soft: #D8BE78;
+  /* Brun café — texte principal, fonds sombres */
   --color-awder-brun: #4E342E;
+  --color-awder-brun-deep: #35211C;
+  /* Fonds & neutres chauds */
+  --color-awder-offwhite: #FAF9F6;
+  --color-awder-sable: #EDE6DA;
+  --color-awder-grisbrun: #8A7B70;
+  /* Sémantiques */
+  --color-awder-bogolan: #5C6B4C; /* succès / « en ligne » */
+  --color-awder-indigo: #2E3A59;  /* information, usage rare */
+
+  /* ===== Typographie — 3 rôles + mono ===== */
+  --font-display: var(--font-cormorant), 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif;
+  --font-script: var(--font-pinyon), 'Segoe Script', 'Brush Script MT', cursive;
+  --font-body: var(--font-jakarta), system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, 'Cascadia Code', Menlo, monospace;
+
+  /* ===== Rayons mesurés ===== */
+  --radius-card: 16px;     /* cartes */
+  --radius-control: 12px;  /* boutons, inputs */
+  --radius-sheet: 24px;    /* feuilles / overlays (haut) */
+
+  /* ===== Ombres chaudes (teintées brun) ===== */
+  --shadow-warm-sm: 0 2px 8px -2px rgb(78 52 46 / 0.10);
+  --shadow-warm-md: 0 10px 24px -10px rgb(78 52 46 / 0.22);
+  --shadow-warm-lg: 0 24px 48px -20px rgb(78 52 46 / 0.35);
+}
+
+body {
+  font-family: var(--font-body);
+  background: var(--color-awder-offwhite);
+  color: var(--color-awder-brun);
+}
+
+/* Titres : serif éditorial, équilibrés */
+h1, h2, h3, .font-display {
+  font-family: var(--font-display);
+  text-wrap: balance;
+}
+
+/* Script d'accent — moments chaleureux uniquement */
+.font-script {
+  font-family: var(--font-script);
+}
+
+/* Petits labels mono en majuscules */
+.awder-label {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+/* Wordmark « AWDER » — toujours en ocre, espacé */
+.awder-wordmark {
+  font-family: var(--font-display);
+  font-weight: 600;
+  color: var(--color-awder-ocre);
+  letter-spacing: 0.4em;
+  text-indent: 0.4em;
+}
+
+/* Focus visible accessible */
+:focus-visible {
+  outline: 2px solid var(--color-awder-ocre);
+  outline-offset: 2px;
+}
+
+/* Scrollbar discrète pour les carrousels */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* Respect de prefers-reduced-motion */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

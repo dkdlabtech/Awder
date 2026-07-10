@@ -7,10 +7,11 @@ import {
   createUserWithEmailAndPassword,
   updateProfile,
   signInWithCustomToken,
+  sendPasswordResetEmail,
   signOut,
   User as FirebaseUser,
 } from 'firebase/auth';
-import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, onSnapshot, setDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '@/lib/firebase';
 
 interface AuthContextType {
@@ -19,6 +20,7 @@ interface AuthContextType {
   loading: boolean;
   signUpWithEmail: (email: string, password: string, displayName: string) => Promise<void>;
   signInWithEmail: (email: string, password: string) => Promise<void>;
+  resetPassword: (email: string) => Promise<void>;
   sendWhatsAppOtp: (phoneNumber: string) => Promise<{ devCode?: string }>;
   verifyWhatsAppOtp: (phoneNumber: string, code: string) => Promise<void>;
   logout: () => Promise<void>;
@@ -30,6 +32,7 @@ const AuthContext = createContext<AuthContextType>({
   loading: true,
   signUpWithEmail: async () => {},
   signInWithEmail: async () => {},
+  resetPassword: async () => {},
   sendWhatsAppOtp: async () => ({}),
   verifyWhatsAppOtp: async () => {},
   logout: async () => {},
@@ -56,51 +59,66 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+    let unsubscribeProfile: (() => void) | null = null;
+
+    const unsubscribeAuth = onAuthStateChanged(auth, async (firebaseUser) => {
       setUser(firebaseUser);
+
+      if (unsubscribeProfile) {
+        unsubscribeProfile();
+        unsubscribeProfile = null;
+      }
+
       if (firebaseUser) {
         try {
           const docRef = doc(db, 'users', firebaseUser.uid);
-          const snap = await getDoc(docRef);
+          unsubscribeProfile = onSnapshot(docRef, async (snap) => {
+            if (snap.exists()) {
+              setProfile(snap.data());
+              setLoading(false);
+            } else {
+              // WhatsApp users have uid prefixed with "wa_"
+              const isWhatsApp = firebaseUser.uid.startsWith('wa_');
+              const phoneFromUid = isWhatsApp ? '+' + firebaseUser.uid.slice(3) : null;
 
-          if (snap.exists()) {
-            setProfile(snap.data());
-          } else {
-            // WhatsApp users have uid prefixed with "wa_"
-            const isWhatsApp = firebaseUser.uid.startsWith('wa_');
-            const phoneFromUid = isWhatsApp ? '+' + firebaseUser.uid.slice(3) : null;
+              const newProfile = {
+                displayName: firebaseUser.displayName ?? phoneFromUid ?? 'Utilisateur Awder',
+                role: 'guest',
+                isVerified: false,
+                idVerificationStatus: 'unverified',
+                createdAt: serverTimestamp(),
+                ...(isWhatsApp
+                  ? { phoneNumber: phoneFromUid }
+                  : { email: firebaseUser.email }),
+              };
 
-            const newProfile = {
-              displayName: firebaseUser.displayName ?? phoneFromUid ?? 'Utilisateur Awder',
-              role: 'guest',
-              isVerified: false,
-              createdAt: serverTimestamp(),
-              ...(isWhatsApp
-                ? { phoneNumber: phoneFromUid }
-                : { email: firebaseUser.email }),
-            };
-
-            await setDoc(docRef, newProfile);
-            await setDoc(doc(db, 'wallets', firebaseUser.uid), {
-              userId: firebaseUser.uid,
-              balance: 0,
-              escrow: 0,
-              currency: 'XOF',
-              updatedAt: serverTimestamp(),
-            });
-
-            setProfile({ ...newProfile, createdAt: new Date().toISOString() });
-          }
+              await setDoc(docRef, newProfile);
+              await setDoc(doc(db, 'wallets', firebaseUser.uid), {
+                userId: firebaseUser.uid,
+                balance: 0,
+                escrow: 0,
+                currency: 'XOF',
+                updatedAt: serverTimestamp(),
+              });
+            }
+          }, (err) => {
+            console.error('Profile listen error:', err);
+            setLoading(false);
+          });
         } catch (error) {
           console.error('Profile sync error:', error);
+          setLoading(false);
         }
       } else {
         setProfile(null);
+        setLoading(false);
       }
-      setLoading(false);
     });
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribeAuth();
+      if (unsubscribeProfile) unsubscribeProfile();
+    };
   }, []);
 
   const signUpWithEmail = async (email: string, password: string, displayName: string) => {
@@ -110,6 +128,10 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
   const signInWithEmail = async (email: string, password: string) => {
     await signInWithEmailAndPassword(auth, email, password);
+  };
+
+  const resetPassword = async (email: string) => {
+    await sendPasswordResetEmail(auth, email);
   };
 
   const sendWhatsAppOtp = async (phoneNumber: string): Promise<{ devCode?: string }> => {
@@ -140,7 +162,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
   return (
     <AuthContext.Provider
-      value={{ user, profile, loading, signUpWithEmail, signInWithEmail, sendWhatsAppOtp, verifyWhatsAppOtp, logout }}
+      value={{ user, profile, loading, signUpWithEmail, signInWithEmail, resetPassword, sendWhatsAppOtp, verifyWhatsAppOtp, logout }}
     >
       {children}
     </AuthContext.Provider>

@@ -29,7 +29,7 @@ service cloud.firestore {
     function isNotBanned() {
       return isSignedIn() && (
         !exists(/databases/$(database)/documents/users/$(request.auth.uid)) ||
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isBanned != true
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('isBanned', false) != true
       );
     }
 
@@ -56,7 +56,8 @@ service cloud.firestore {
       return data.guestId == request.auth.uid &&
              data.listingId is string &&
              data.totalPrice is number && data.totalPrice >= 0 &&
-             data.status == 'pending_payment' &&
+             // instantanée : pending_payment ; sur demande : pending_host_approval
+             data.status in ['pending_payment', 'pending_host_approval'] &&
              data.keys().hasAll(['listingId', 'guestId', 'hostId', 'status', 'totalPrice', 'createdAt']);
     }
 
@@ -108,13 +109,20 @@ service cloud.firestore {
         isOwner(userId) &&
         incoming().diff(existing()).affectedKeys().hasOnly([
           'displayName', 'phoneNumber', 'bio', 'idCardUrl', 'selfieUrl', 'idDocType',
-          'idVerificationStatus', 'kycSubmittedAt', 'role', 'isVerified',
-          'updatedAt', 'totalGains'
+          'idVerificationStatus', 'kycSubmittedAt', 'role',
+          'favorites', 'updatedAt'
         ]) &&
-        (!('role' in incoming().diff(existing()).addedFields()) || incoming().role in ['guest', 'host'])
+        // role : uniquement guest ou host (jamais admin)
+        (!incoming().diff(existing()).affectedKeys().hasAny(['role']) ||
+         incoming().role in ['guest', 'host']) &&
+        // KYC : l'utilisateur ne peut que SOUMETTRE (→ pending), jamais se valider
+        (!incoming().diff(existing()).affectedKeys().hasAny(['idVerificationStatus']) ||
+         incoming().idVerificationStatus == 'pending')
       ) || (
         // Admin peut tout modifier sauf accorder le rôle admin
-        isAdmin()
+        isAdmin() &&
+        (!incoming().diff(existing()).affectedKeys().hasAny(['role']) ||
+         incoming().role in ['guest', 'host'])
       );
       
       // Aucune suppression directe (utiliser ban)
@@ -122,22 +130,32 @@ service cloud.firestore {
     }
 
     match /listings/{listingId} {
-      // Lecture publique des annonces approuvées + actives ; admin voit tout ; hôte voit les siennes
-      allow read: if (
-        resource.data.moderationStatus == 'approved' && resource.data.isActive == true
-      ) || isAdmin() || (isSignedIn() && resource.data.hostId == request.auth.uid);
+      // Lecture publique — la modération est gérée côté client par où('moderationStatus','==','approved')
+      allow read: if true;
       
       // Création par un hôte non banni, statut forcé en pending_review
       allow create: if isEmailVerified() && isNotBanned() && isValidListing(incoming());
       
       // Mise à jour par le host owner (sauf champs admin) OU par un admin
+      // Mise à jour par le host owner (transitions limitées) OU par un admin
       allow update: if (
         isOwner(existing().hostId) && isNotBanned() &&
-        // Hôte ne peut pas modifier les champs de modération
+        // Champs réservés à l'admin : intouchables
         !incoming().diff(existing()).affectedKeys().hasAny([
-          'moderationStatus', 'rejectionReason', 'reviewedBy', 'reviewedAt',
-          'isVerified', 'badges'
-        ])
+          'rejectionReason', 'reviewedBy', 'reviewedAt', 'isVerified', 'badges'
+        ]) &&
+        // moderationStatus : inchangé, OU transitions hôte autorisées
+        (
+          !incoming().diff(existing()).affectedKeys().hasAny(['moderationStatus']) ||
+          // soumettre un brouillon (ou re-soumettre après rejet)
+          (existing().moderationStatus in ['draft', 'rejected'] &&
+           incoming().moderationStatus == 'pending_review') ||
+          // repasser en brouillon
+          incoming().moderationStatus == 'draft'
+        ) &&
+        // L'hôte ne peut JAMAIS s'auto-activer
+        (!incoming().diff(existing()).affectedKeys().hasAny(['isActive']) ||
+         incoming().isActive == false)
       ) || isAdmin();
       
       allow delete: if isOwner(existing().hostId) || isAdmin();
@@ -157,9 +175,9 @@ service cloud.firestore {
          incoming().hostId == existing().hostId &&
          incoming().totalPrice == existing().totalPrice &&
          incoming().diff(existing()).affectedKeys().hasAny(['status', 'cautionStatus', 'checkInStatus', 'hasDispute', 'disputeId'])) ||
-        // Host update (Accept)
-        (isOwner(existing().hostId) && 
-         incoming().diff(existing()).affectedKeys().hasOnly(['status'])) ||
+        // Host update (Accept / Refuse une demande — status ± respondedAt)
+        (isOwner(existing().hostId) &&
+         incoming().diff(existing()).affectedKeys().hasOnly(['status', 'respondedAt'])) ||
         // Admin peut tout (médiation)
         isAdmin()
       );

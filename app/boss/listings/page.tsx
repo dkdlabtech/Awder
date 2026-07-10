@@ -58,6 +58,7 @@ export default function AdminListingsPage() {
       },
       (err) => {
         console.error(err);
+        setActionError(`Erreur de chargement : ${err.message}`); // affiche à l'écran
         setLoading(false);
       }
     );
