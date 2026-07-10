@@ -14,6 +14,7 @@ import {
   LogOut,
   ShieldCheck,
   Shield,
+  Sparkles,
 } from 'lucide-react';
 import { signOut } from 'firebase/auth';
 import { bossAuth as auth } from '@/lib/firebase';
@@ -24,6 +25,7 @@ const NAV = [
   { href: '/boss/users', label: 'Utilisateurs', icon: Users },
   { href: '/boss/disputes', label: 'Litiges', icon: AlertTriangle },
   { href: '/boss/transactions', label: 'Transactions', icon: Receipt },
+  { href: '/boss/deals', label: 'Bons plans', icon: Sparkles },
   { href: '/boss/settings', label: 'Paramètres', icon: Settings },
 ];
 

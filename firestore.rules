@@ -242,6 +242,13 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // ── ✨ BONS PLANS géolocalisés — curés par l'admin / partenaires ──────────
+    // Lecture réservée aux connectés (l'app filtre ensuite selon les réservations).
+    match /localDeals/{dealId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
     // ── ✨ VISIT REQUESTS (nouveau) — agents terrain ───────────────────────────
     match /visitRequests/{visitId} {
       allow read: if isSignedIn() && (

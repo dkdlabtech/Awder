@@ -242,7 +242,7 @@ const HOST_QUICK_REPLIES = [
 
 export default function HomeView() {
   const { user, signUpWithEmail, signInWithEmail, resetPassword, sendWhatsAppOtp, verifyWhatsAppOtp, logout, profile } = useAuth();
-  const [activeTab, setActiveTab] = useState<'home' | 'bookings' | 'profile' | 'messages'>('home');
+  const [activeTab, setActiveTab] = useState<'home' | 'bookings' | 'profile' | 'messages' | 'deals'>('home');
   const [userMode, setUserMode] = useState<'voyageur' | 'hote'>('voyageur');
   // Mode EFFECTIF : un utilisateur non-hôte est toujours voyageur, quel que soit l'état
   // (évite qu'un nouvel utilisateur hérite du mode 'hote' d'une session précédente).
@@ -699,6 +699,17 @@ export default function HomeView() {
   const [viewingReceipt, setViewingReceipt] = useState<any>(null);
   const [welcomeCardBooking, setWelcomeCardBooking] = useState<any>(null);
   const [showAskQuestion, setShowAskQuestion] = useState(false);
+
+  // ✨ Bons plans géolocalisés — curés par Awder + partenaires (lecture connectés)
+  const [localDeals, setLocalDeals] = useState<any[]>([]);
+  useEffect(() => {
+    if (!user) { setLocalDeals([]); return; }
+    const q = query(collection(db, 'localDeals'), where('active', '==', true));
+    const unsub = onSnapshot(q, (snap) => {
+      setLocalDeals(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, () => setLocalDeals([]));
+    return () => unsub();
+  }, [user]);
 
   // ✨ Envoi d'une question pré-définie à l'hôte (ouvre la conversation en mode restreint)
   const sendPredefinedQuestion = async (text: string) => {
@@ -2217,6 +2228,78 @@ export default function HomeView() {
           </motion.div>
         </div>
       )}
+
+      {/* ✨ Bons plans géolocalisés — connecté + a réservé */}
+      {activeTab === 'deals' && (() => {
+        const stayCities = Array.from(new Set(
+          userBookings
+            .filter((b: any) => ['paid_escrow', 'completed'].includes(b.status))
+            .map((b: any) => listings.find(l => l.id === b.listingId)?.location?.city)
+            .filter(Boolean)
+        )) as string[];
+        const hasBooked = stayCities.length > 0;
+        const matched = localDeals
+          .filter((d: any) => stayCities.some(c => (d.city || '').toLowerCase() === c.toLowerCase()))
+          .sort((a: any, b: any) => (b.sponsored ? 1 : 0) - (a.sponsored ? 1 : 0));
+
+        return (
+          <div className="px-6 py-10 space-y-6 pb-32">
+            <div className="space-y-1">
+              <p className="awder-label text-awder-gold">Autour de votre séjour</p>
+              <h2 className="font-display text-3xl font-semibold text-awder-brun tracking-tight">Bons plans</h2>
+              <p className="text-sm text-awder-grisbrun">Restaurants, marchés et réductions près de chez vous — sélectionnés par Awder.</p>
+            </div>
+
+            {!user ? (
+              <EmptyState
+                icon={<Sparkles className="w-8 h-8" />}
+                title="Connectez-vous pour les bons plans"
+                sub="Les bonnes adresses autour de votre séjour s'affichent une fois connecté."
+                action={<button onClick={() => setShowLoginModal(true)} className="px-6 py-3 bg-awder-ocre text-white rounded-xl font-semibold text-sm">Se connecter</button>}
+              />
+            ) : !hasBooked ? (
+              <EmptyState
+                icon={<Lock className="w-8 h-8" />}
+                title="Réservez pour débloquer"
+                sub="Dès votre première réservation payée, découvrez les meilleures adresses autour du lieu — pensé pour la diaspora et les visiteurs."
+                action={<button onClick={() => setActiveTab('home')} className="px-6 py-3 bg-awder-ocre text-white rounded-xl font-semibold text-sm">Explorer les lieux</button>}
+              />
+            ) : matched.length === 0 ? (
+              <EmptyState
+                icon={<MapPin className="w-8 h-8" />}
+                title={`Bientôt à ${stayCities[0]}`}
+                sub="Nous ajoutons des bons plans dans votre ville. Revenez très vite !"
+              />
+            ) : (
+              <div className="space-y-3">
+                {matched.map((d: any) => (
+                  <div key={d.id} className="p-4 bg-white border border-awder-sable rounded-2xl flex items-start gap-3.5">
+                    <span className="w-11 h-11 shrink-0 rounded-xl bg-awder-ocre/10 text-awder-ocre grid place-items-center">
+                      <Utensils className="w-5 h-5" />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="font-semibold text-sm text-awder-brun">{d.title}</p>
+                        {d.sponsored && <span className="px-2 py-0.5 bg-awder-gold text-awder-brun-deep rounded-full text-[10px] font-semibold">Partenaire</span>}
+                      </div>
+                      <p className="text-xs text-awder-grisbrun mt-0.5">
+                        {[d.type, d.neighborhood, d.distance].filter(Boolean).join(' · ')}
+                      </p>
+                      {d.description && <p className="text-[13px] text-awder-brun/80 mt-1.5 leading-relaxed">{d.description}</p>}
+                      {d.discount && (
+                        <span className="inline-block mt-2 px-2.5 py-1 bg-awder-bogolan/12 text-awder-bogolan rounded-full text-xs font-semibold">
+                          {d.discount}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+                <p className="text-[11px] text-awder-grisbrun text-center pt-2">Awder ne cesse d&apos;ajouter de nouveaux partenaires près de vous.</p>
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {activeTab === 'messages' && (
         <MessagesView

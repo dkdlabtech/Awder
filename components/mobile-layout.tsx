@@ -4,12 +4,12 @@ import React from 'react';
 import Image from 'next/image';
 import { useRouter, usePathname } from 'next/navigation';
 import { motion, AnimatePresence } from 'motion/react';
-import { Search, Calendar, MessageSquare, User, ArrowLeftRight } from 'lucide-react';
+import { Search, Calendar, MessageSquare, User, ArrowLeftRight, Sparkles } from 'lucide-react';
 
 interface MobileLayoutProps {
   children: React.ReactNode;
   /** Remplace l'auto-détection depuis l'URL si nécessaire. */
-  activeTab?: 'home' | 'bookings' | 'profile' | 'messages';
+  activeTab?: 'home' | 'bookings' | 'profile' | 'messages' | 'deals';
   /** Callback optionnel pour rétro-compatibilité avec page.tsx monolithe. */
   onTabChange?: (tab: any) => void;
   /** Callback optionnel rétro-compatibilité. */
@@ -53,6 +53,7 @@ export const MobileLayout = ({
     const routes: Record<string, string> = {
       home: '/',
       bookings: '/bookings',
+      deals: '/deals',
       messages: '/messages',
       profile: '/profile',
     };
@@ -129,11 +130,12 @@ export const MobileLayout = ({
         </main>
 
         {/* Bottom Nav */}
-        <nav className="fixed bottom-0 w-full max-w-md bg-white/95 backdrop-blur-md border-t border-awder-sable px-6 py-3 flex justify-between items-center z-20">
-          <NavButton icon={<Search className="w-6 h-6" />} label="Explorer" active={activeTab === 'home'} onClick={() => navigate('home')} />
-          <NavButton icon={<Calendar className="w-6 h-6" />} label="Réserves" active={activeTab === 'bookings'} onClick={() => navigate('bookings')} />
-          <NavButton icon={<MessageSquare className="w-6 h-6" />} label="Messages" active={activeTab === 'messages'} onClick={() => navigate('messages')} />
-          <NavButton icon={<User className="w-6 h-6" />} label="Profil" active={activeTab === 'profile'} onClick={() => navigate('profile')} />
+        <nav className="fixed bottom-0 w-full max-w-md bg-white/95 backdrop-blur-md border-t border-awder-sable px-3 py-3 flex justify-between items-center z-20">
+          <NavButton icon={<Search className="w-5 h-5" />} label="Explorer" active={activeTab === 'home'} onClick={() => navigate('home')} />
+          <NavButton icon={<Calendar className="w-5 h-5" />} label="Réserves" active={activeTab === 'bookings'} onClick={() => navigate('bookings')} />
+          <NavButton icon={<Sparkles className="w-5 h-5" />} label="Bons plans" active={activeTab === 'deals'} onClick={() => navigate('deals')} />
+          <NavButton icon={<MessageSquare className="w-5 h-5" />} label="Messages" active={activeTab === 'messages'} onClick={() => navigate('messages')} />
+          <NavButton icon={<User className="w-5 h-5" />} label="Profil" active={activeTab === 'profile'} onClick={() => navigate('profile')} />
         </nav>
       </div>
     </div>
@@ -153,11 +155,11 @@ const NavButton = ({
 }) => (
   <button
     onClick={onClick}
-    className={`flex flex-col items-center gap-0.5 transition-all active:scale-90 ${active ? 'text-awder-ocre' : 'text-awder-grisbrun hover:text-awder-brun'}`}
+    className={`flex-1 flex flex-col items-center gap-0.5 transition-all active:scale-90 ${active ? 'text-awder-ocre' : 'text-awder-grisbrun hover:text-awder-brun'}`}
   >
-    <div className={`p-2 rounded-xl transition-all ${active ? 'bg-awder-ocre/10' : 'bg-transparent'}`}>
+    <div className={`p-1.5 rounded-xl transition-all ${active ? 'bg-awder-ocre/10' : 'bg-transparent'}`}>
       {icon}
     </div>
-    <span className="awder-label text-[9px]">{label}</span>
+    <span className="awder-label text-[8px] leading-none">{label}</span>
   </button>
 );
