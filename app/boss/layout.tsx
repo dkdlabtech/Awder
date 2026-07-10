@@ -16,7 +16,7 @@ import {
   Shield,
 } from 'lucide-react';
 import { signOut } from 'firebase/auth';
-import { auth } from '@/lib/firebase';
+import { bossAuth as auth } from '@/lib/firebase';
 
 const NAV = [
   { href: '/boss/dashboard', label: 'Vue d\'ensemble', icon: LayoutDashboard },

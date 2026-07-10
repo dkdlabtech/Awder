@@ -49,8 +49,15 @@ function stateFromDoc(d: any) {
     hostTips: (d?.hostTips as HostTip[]) ?? [],
     capacity: d?.capacity ?? 2,
     bedrooms: d?.bedrooms ?? 1,
+    // ✨ Champs spécifiques « Salle d'événements »
+    eventEquipment: (d?.eventEquipment as string[]) ?? [],
+    eventEquipmentExtra: d?.eventEquipmentExtra ?? '',
+    eventRules: d?.eventRules ?? '',
   };
 }
+
+// Inventaire type d'une salle d'événements (checklist)
+const EVENT_EQUIPMENT = ['Sonorisation', 'Éclairage scénique', 'Chaises', 'Tables', 'Scène / Podium', 'Vidéoprojecteur', 'Écran', 'Climatisation', 'Groupe électrogène', 'Cuisine / Traiteur', 'Vestiaire', 'Parking', 'Sécurité / Gardien', 'Décoration'];
 
 export function AddListingOverlay({ onClose, onSuccess, initialData }: AddListingOverlayProps) {
   const { profile } = useAuth();
@@ -163,11 +170,15 @@ export function AddListingOverlay({ onClose, onSuccess, initialData }: AddListin
       /* ✨ Capacité d'accueil */
       capacity: Number(listingData.capacity) || 1,
       bedrooms: Number(listingData.bedrooms) || 0,
+      /* ✨ Salle d'événements */
+      eventEquipment: listingData.eventEquipment,
+      eventEquipmentExtra: listingData.eventEquipmentExtra || '',
+      eventRules: listingData.eventRules || '',
       /* ✨ Mode de réservation choisi par l'hôte */
       bookingMode: listingData.bookingMode,
       /* ✨ Bons plats à côté — bonnes adresses de l'hôte */
       hostTips: listingData.hostTips,
-      isVerified: initialData?.isVerified || false,
+      // isVerified est contrôlé UNIQUEMENT par l'admin (jamais envoyé par le client).
       isActive: false,
       moderationStatus: status === 'published' ? 'pending_review' : 'draft',
       lastStep: step,
@@ -529,27 +540,39 @@ export function AddListingOverlay({ onClose, onSuccess, initialData }: AddListin
                   Racontez <span className="text-awder-ocre italic">votre lieu</span>.
                 </h3>
                 <div className="space-y-4">
-                  {/* ✨ Capacité d'accueil */}
-                  <div className="grid grid-cols-2 gap-3.5">
+                  {/* ✨ Capacité d'accueil — adaptée au type */}
+                  {listingData.type === 'event' ? (
                     <div className="p-4 bg-white border border-awder-sable rounded-2xl space-y-1.5">
-                      <p className="awder-label text-awder-grisbrun">Voyageurs max</p>
+                      <p className="awder-label text-awder-grisbrun">Capacité d&apos;accueil (personnes max)</p>
                       <input
                         type="number" min={1}
                         value={listingData.capacity}
                         onChange={(e) => setListingData((p: any) => ({ ...p, capacity: Number(e.target.value) }))}
-                        className="w-full text-2xl font-display font-semibold text-awder-brun bg-transparent outline-none"
+                        className="w-full text-3xl font-display font-semibold text-awder-brun bg-transparent outline-none"
                       />
                     </div>
-                    <div className="p-4 bg-white border border-awder-sable rounded-2xl space-y-1.5">
-                      <p className="awder-label text-awder-grisbrun">Chambres</p>
-                      <input
-                        type="number" min={0}
-                        value={listingData.bedrooms}
-                        onChange={(e) => setListingData((p: any) => ({ ...p, bedrooms: Number(e.target.value) }))}
-                        className="w-full text-2xl font-display font-semibold text-awder-brun bg-transparent outline-none"
-                      />
+                  ) : (
+                    <div className="grid grid-cols-2 gap-3.5">
+                      <div className="p-4 bg-white border border-awder-sable rounded-2xl space-y-1.5">
+                        <p className="awder-label text-awder-grisbrun">Voyageurs max</p>
+                        <input
+                          type="number" min={1}
+                          value={listingData.capacity}
+                          onChange={(e) => setListingData((p: any) => ({ ...p, capacity: Number(e.target.value) }))}
+                          className="w-full text-2xl font-display font-semibold text-awder-brun bg-transparent outline-none"
+                        />
+                      </div>
+                      <div className="p-4 bg-white border border-awder-sable rounded-2xl space-y-1.5">
+                        <p className="awder-label text-awder-grisbrun">Chambres</p>
+                        <input
+                          type="number" min={0}
+                          value={listingData.bedrooms}
+                          onChange={(e) => setListingData((p: any) => ({ ...p, bedrooms: Number(e.target.value) }))}
+                          className="w-full text-2xl font-display font-semibold text-awder-brun bg-transparent outline-none"
+                        />
+                      </div>
                     </div>
-                  </div>
+                  )}
 
                   <textarea
                     placeholder="Décrivez votre espace, son ambiance, ses points forts…"
@@ -576,6 +599,53 @@ export function AddListingOverlay({ onClose, onSuccess, initialData }: AddListin
                       })}
                     </div>
                   </div>
+
+                  {/* ✨ Module Salle d'événements — inventaire + consignes */}
+                  {listingData.type === 'event' && (
+                    <>
+                      <div className="space-y-3 pt-2">
+                        <div>
+                          <p className="awder-label text-awder-gold">Inventaire du matériel inclus</p>
+                          <p className="text-xs text-awder-grisbrun mt-1">Cochez ce qui est fourni avec la salle.</p>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {EVENT_EQUIPMENT.map((eq) => {
+                            const on = listingData.eventEquipment.includes(eq);
+                            return (
+                              <button
+                                key={eq}
+                                type="button"
+                                onClick={() => setListingData((p: any) => ({ ...p, eventEquipment: on ? p.eventEquipment.filter((x: string) => x !== eq) : [...p.eventEquipment, eq] }))}
+                                className={`px-3.5 py-2 rounded-full text-xs font-semibold border transition-all ${on ? 'bg-awder-ocre/10 border-awder-ocre/40 text-awder-ocre' : 'bg-white border-awder-sable text-awder-grisbrun'}`}
+                              >
+                                {eq}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <input
+                          placeholder="Autre matériel (ex : 200 chaises Chiavari, 20 tables rondes)"
+                          value={listingData.eventEquipmentExtra}
+                          onChange={(e) => setListingData((p: any) => ({ ...p, eventEquipmentExtra: e.target.value }))}
+                          className={`${inputCls} text-sm`}
+                        />
+                      </div>
+
+                      <div className="space-y-2 pt-2">
+                        <div>
+                          <p className="awder-label text-awder-gold">Consignes &amp; règlement</p>
+                          <p className="text-xs text-awder-grisbrun mt-1">Vos conditions d&apos;utilisation (horaires, bruit, nettoyage, interdictions…).</p>
+                        </div>
+                        <textarea
+                          rows={4}
+                          placeholder="Ex : Musique jusqu'à minuit. Nettoyage à la charge du locataire. Pas de pétards. Caution récupérée après état des lieux."
+                          value={listingData.eventRules}
+                          onChange={(e) => setListingData((p: any) => ({ ...p, eventRules: e.target.value }))}
+                          className={`${inputCls} resize-none text-sm`}
+                        />
+                      </div>
+                    </>
+                  )}
 
                   {/* ✨ Garanties Awder (Sira-Yiriwa) */}
                   <div className="space-y-3 pt-2">

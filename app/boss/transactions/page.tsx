@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { collection, query, orderBy, limit, onSnapshot, where } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
+import { bossDb as db } from '@/lib/firebase';
 import { Banknote, TrendingUp, ArrowDownToLine, RefreshCcw, Percent } from 'lucide-react';
 
 function formatXOF(n: number): string {

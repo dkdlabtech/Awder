@@ -140,9 +140,9 @@ service cloud.firestore {
       // Mise à jour par le host owner (transitions limitées) OU par un admin
       allow update: if (
         isOwner(existing().hostId) && isNotBanned() &&
-        // Champs réservés à l'admin : intouchables
+        // Champs réservés à l'admin : intouchables (badges = auto-calculés côté hôte, autorisés)
         !incoming().diff(existing()).affectedKeys().hasAny([
-          'rejectionReason', 'reviewedBy', 'reviewedAt', 'isVerified', 'badges'
+          'rejectionReason', 'reviewedBy', 'reviewedAt', 'isVerified'
         ]) &&
         // moderationStatus : inchangé, OU transitions hôte autorisées
         (

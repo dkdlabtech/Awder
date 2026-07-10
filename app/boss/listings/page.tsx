@@ -11,7 +11,7 @@ import {
   doc,
   getDoc,
 } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
+import { bossDb as db } from '@/lib/firebase';
 import { adminFetch } from '@/hooks/use-admin';
 import {
   CheckCircle2,

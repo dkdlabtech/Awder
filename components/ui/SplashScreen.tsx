@@ -13,17 +13,21 @@ import { BogolanBackdrop } from './index';
 const SPLASH_DURATION_MS = 5000;
 
 export function SplashScreen() {
-  const [visible, setVisible] = React.useState(false);
+  // Visible dès le premier rendu (client + SSR) pour COUVRIR l'accueil sans flash.
+  const [visible, setVisible] = React.useState(true);
 
   React.useEffect(() => {
     if (typeof window === 'undefined') return;
-    if (sessionStorage.getItem('awder_splash_seen')) return;
-    const show = setTimeout(() => setVisible(true), 0);
+    if (sessionStorage.getItem('awder_splash_seen')) {
+      // Déjà vu dans cette session : on masque immédiatement (async pour éviter le flash inverse).
+      const t = setTimeout(() => setVisible(false), 0);
+      return () => clearTimeout(t);
+    }
     const hide = setTimeout(() => {
       sessionStorage.setItem('awder_splash_seen', '1');
       setVisible(false);
     }, SPLASH_DURATION_MS);
-    return () => { clearTimeout(show); clearTimeout(hide); };
+    return () => clearTimeout(hide);
   }, []);
 
   return (

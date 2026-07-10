@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { doc, getDoc } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
+import { bossDb as db } from '@/lib/firebase';
 import { adminFetch } from '@/hooks/use-admin';
 import { Save, Loader2, Info } from 'lucide-react';
 

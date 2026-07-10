@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { collection, query, where, orderBy, onSnapshot, doc, getDoc } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
+import { bossDb as db } from '@/lib/firebase';
 import { adminFetch } from '@/hooks/use-admin';
 import { AlertTriangle, MessageCircle, CheckCircle2, XCircle, Loader2 } from 'lucide-react';
 

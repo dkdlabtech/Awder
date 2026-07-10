@@ -4,7 +4,7 @@ import { useState, FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
-import { auth, db } from '@/lib/firebase';
+import { bossAuth as auth, bossDb as db } from '@/lib/firebase';
 import { Shield, Lock, Mail, Loader2, AlertCircle, Eye, EyeOff } from 'lucide-react';
 
 export default function BossLoginPage() {

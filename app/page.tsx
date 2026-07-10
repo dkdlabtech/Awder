@@ -244,6 +244,9 @@ export default function HomeView() {
   const { user, signUpWithEmail, signInWithEmail, resetPassword, sendWhatsAppOtp, verifyWhatsAppOtp, logout, profile } = useAuth();
   const [activeTab, setActiveTab] = useState<'home' | 'bookings' | 'profile' | 'messages'>('home');
   const [userMode, setUserMode] = useState<'voyageur' | 'hote'>('voyageur');
+  // Mode EFFECTIF : un utilisateur non-hôte est toujours voyageur, quel que soit l'état
+  // (évite qu'un nouvel utilisateur hérite du mode 'hote' d'une session précédente).
+  const effectiveMode: 'voyageur' | 'hote' = profile?.role === 'host' ? userMode : 'voyageur';
   const [selectedCurrency, setSelectedCurrency] = useState<CurrencyCode>('XOF');
   const [currentImageIdx, setCurrentImageIdx] = useState<number>(0);
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
@@ -420,6 +423,7 @@ export default function HomeView() {
   // ✨ Favoris — synchronisés sur users/{uid}.favorites
   const [favoriteIds, setFavoriteIds] = useState<string[]>([]);
   const [showOnlyFavorites, setShowOnlyFavorites] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(6);
   useEffect(() => {
     if (!user) { setFavoriteIds([]); return; }
     const unsub = onSnapshot(doc(db, 'users', user.uid), (snap) => {
@@ -1050,7 +1054,7 @@ export default function HomeView() {
       userMode={profile?.role === 'host' ? userMode : undefined}
       onToggleMode={profile?.role === 'host' ? () => { setUserMode(m => m === 'voyageur' ? 'hote' : 'voyageur'); setActiveTab('home'); } : undefined}
     >
-      {activeTab === 'home' && userMode === 'voyageur' && !selectedListing && (
+      {activeTab === 'home' && effectiveMode === 'voyageur' && !selectedListing && (
         <div className="space-y-6">
           <div className="px-6 pt-6 flex justify-between items-end">
             <div className="space-y-2">
@@ -1088,43 +1092,70 @@ export default function HomeView() {
             ))}
           </div>
 
-          <div className="px-6 pb-6 space-y-6">
-            <div className="flex justify-between items-center px-2">
-              <h3 className="font-semibold text-awder-brun text-lg">À la une</h3>
-              <button className="text-xs font-bold text-awder-ocre underline decoration-awder-ocre/30 underline-offset-8">Voir tout</button>
-            </div>
-            <div className="grid grid-cols-1 gap-8">
-              {(showOnlyFavorites ? filteredListings.filter(l => favoriteIds.includes(l.id)) : filteredListings).length > 0 ? (showOnlyFavorites ? filteredListings.filter(l => favoriteIds.includes(l.id)) : filteredListings).map((listing) => (
-                <ListingCard
-                  key={listing.id}
-                  listing={listing as any}
-                  onClick={() => setSelectedListing(listing)}
-                  isFavorite={favoriteIds.includes(listing.id)}
-                  onToggleFavorite={() => toggleFavorite(listing.id)}
-                />
-              )) : showOnlyFavorites ? (
-                <EmptyState
-                  icon={<Heart className="w-8 h-8" />}
-                  title="Aucun favori pour l'instant"
-                  sub="Touchez le cœur sur une annonce pour la retrouver ici."
-                />
-              ) : listings.length === 0 ? (
-                <div className="py-20 text-center space-y-3">
-                  <div className="w-20 h-20 bg-awder-sable/40 rounded-full flex items-center justify-center mx-auto text-awder-grisbrun/60">
-                    <Home className="w-8 h-8" />
+          {(() => {
+            const baseList = showOnlyFavorites ? filteredListings.filter(l => favoriteIds.includes(l.id)) : filteredListings;
+            const shown = baseList.slice(0, visibleCount);
+            const remaining = baseList.length - shown.length;
+            return (
+              <div className="px-6 pb-6 space-y-6">
+                <div className="flex justify-between items-center px-2">
+                  <h3 className="font-semibold text-awder-brun text-lg">{showOnlyFavorites ? 'Mes favoris' : 'À la une'}</h3>
+                  {baseList.length > 0 && (
+                    <span className="text-xs font-semibold text-awder-grisbrun">{baseList.length} lieu{baseList.length > 1 ? 'x' : ''}</span>
+                  )}
+                </div>
+                <div className="grid grid-cols-1 gap-8">
+                  {baseList.length > 0 ? shown.map((listing) => (
+                    <ListingCard
+                      key={listing.id}
+                      listing={listing as any}
+                      onClick={() => setSelectedListing(listing)}
+                      isFavorite={favoriteIds.includes(listing.id)}
+                      onToggleFavorite={() => toggleFavorite(listing.id)}
+                    />
+                  )) : showOnlyFavorites ? (
+                    <EmptyState
+                      icon={<Heart className="w-8 h-8" />}
+                      title="Aucun favori pour l'instant"
+                      sub="Touchez le cœur sur une annonce pour la retrouver ici."
+                    />
+                  ) : listings.length === 0 ? (
+                    <div className="py-20 text-center space-y-3">
+                      <div className="w-20 h-20 bg-awder-sable/40 rounded-full flex items-center justify-center mx-auto text-awder-grisbrun/60">
+                        <Home className="w-8 h-8" />
+                      </div>
+                      <p className="text-awder-grisbrun font-bold">Aucune annonce pour le moment</p>
+                      <p className="text-awder-grisbrun/60 text-[10px] font-bold uppercase tracking-widest">
+                        Les hôtes n&apos;ont pas encore publié d&apos;espace
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="py-20 text-center">
+                      <p className="text-awder-grisbrun font-bold">Aucun résultat pour cette recherche</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Pagination : charger plus / tout voir */}
+                {remaining > 0 && (
+                  <div className="flex flex-col items-center gap-2 pt-2">
+                    <button
+                      onClick={() => setVisibleCount(c => c + 6)}
+                      className="px-6 py-3 bg-white border border-awder-sable rounded-xl font-semibold text-sm text-awder-brun active:scale-[0.98] transition-all"
+                    >
+                      Voir plus ({remaining} restant{remaining > 1 ? 's' : ''})
+                    </button>
+                    <button
+                      onClick={() => setVisibleCount(baseList.length)}
+                      className="text-xs font-semibold text-awder-ocre underline decoration-awder-ocre/30 underline-offset-4"
+                    >
+                      Tout afficher
+                    </button>
                   </div>
-                  <p className="text-awder-grisbrun font-bold">Aucune annonce pour le moment</p>
-                  <p className="text-awder-grisbrun/60 text-[10px] font-bold uppercase tracking-widest">
-                    Les hôtes n'ont pas encore publié d'espace
-                  </p>
-                </div>
-              ) : (
-                <div className="py-20 text-center">
-                  <p className="text-awder-grisbrun font-bold">Aucun résultat pour cette recherche</p>
-                </div>
-              )}
-            </div>
-          </div>
+                )}
+              </div>
+            );
+          })()}
 
           {/* Floating Welcome Message */}
           <AnimatePresence>
@@ -1411,6 +1442,41 @@ export default function HomeView() {
                     ))}
                   </div>
                 </div>
+              )}
+
+              {/* ✨ Affichage spécifique SALLE D'ÉVÉNEMENTS */}
+              {selectedListing.type === 'event' && (
+                <>
+                  {(selectedListing.eventEquipment?.length > 0 || selectedListing.eventEquipmentExtra) && (
+                    <div className="space-y-3">
+                      <div>
+                        <h3 className="font-semibold text-awder-brun text-xl tracking-tight">Matériel inclus</h3>
+                        <p className="awder-label text-awder-gold mt-0.5">Tout est fourni</p>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        {(selectedListing.eventEquipment || []).map((eq: string) => (
+                          <div key={eq} className="flex items-center gap-2 p-3 bg-white border border-awder-sable rounded-xl">
+                            <CheckCircle2 className="w-4 h-4 text-awder-bogolan shrink-0" />
+                            <span className="text-[13px] font-medium text-awder-brun">{eq}</span>
+                          </div>
+                        ))}
+                      </div>
+                      {selectedListing.eventEquipmentExtra && (
+                        <p className="text-[13px] text-awder-grisbrun italic">+ {selectedListing.eventEquipmentExtra}</p>
+                      )}
+                    </div>
+                  )}
+
+                  {selectedListing.eventRules && (
+                    <div className="p-5 bg-awder-ocre/[0.06] border border-awder-ocre/15 rounded-2xl space-y-2">
+                      <div className="flex items-center gap-2">
+                        <FileText className="w-4 h-4 text-awder-ocre" />
+                        <h4 className="font-semibold text-awder-brun text-base">Consignes &amp; règlement</h4>
+                      </div>
+                      <p className="text-[13px] text-awder-brun/85 leading-relaxed whitespace-pre-line">{selectedListing.eventRules}</p>
+                    </div>
+                  )}
+                </>
               )}
 
               {/* ✨ Avis Diya — différenciateur confiance */}
@@ -2010,7 +2076,7 @@ export default function HomeView() {
         </div>
       )}
 
-      {activeTab === 'home' && userMode === 'hote' && (
+      {activeTab === 'home' && effectiveMode === 'hote' && (
         <HostDashboard
           profile={profile}
           wallet={wallet}
@@ -2023,12 +2089,10 @@ export default function HomeView() {
           onWithdraw={() => setShowWithdraw(true)}
           onEditListing={(l: any) => { setEditingListing(l); setShowAddListing(true); }}
           onAddListing={() => {
-            if (profile?.idVerificationStatus !== 'verified') {
-              setShowIdVerification(true);
-            } else {
-              setShowAddListing(true);
-            }
-          }} 
+            // KYC demandé à la PUBLICATION (dans AddListingOverlay), pas avant de créer.
+            setEditingListing(null);
+            setShowAddListing(true);
+          }}
           onViewBooking={(b: any) => setActiveTab('bookings')}
           onSwitchMode={() => setUserMode('voyageur')}
           activeSubTab={hostActiveTab}
@@ -2167,12 +2231,12 @@ export default function HomeView() {
           myUid={user.uid}
           onClose={() => setActiveChat(null)}
           canFreeText={hasFreeChatWith(activeChat.otherUid)}
-          isHost={userMode === 'hote'}
+          isHost={effectiveMode === 'hote'}
         />
       )}
 
       {/* ✨ Réservations REÇUES par l'hôte (mode hôte) */}
-      {activeTab === 'bookings' && userMode === 'hote' && (
+      {activeTab === 'bookings' && effectiveMode === 'hote' && (
         <div className="px-6 py-10 space-y-8 pb-32">
           <div className="space-y-2">
             <h2 className="text-4xl font-semibold text-awder-brun tracking-tighter leading-none">Réservations reçues</h2>
@@ -2317,7 +2381,7 @@ export default function HomeView() {
         </div>
       )}
 
-      {activeTab === 'bookings' && userMode !== 'hote' && (
+      {activeTab === 'bookings' && effectiveMode !== 'hote' && (
         <div className="px-6 py-10 space-y-10 pb-32">
           <div className="space-y-2">
             <h2 className="text-4xl font-semibold text-awder-brun tracking-tighter leading-none">Mes Réserves</h2>
@@ -2964,26 +3028,7 @@ export default function HomeView() {
             </div>
           </div>
 
-          {/* Toggle Voyageur / Hôte — visible UNIQUEMENT pour les hôtes confirmés */}
-          {profile?.role === 'host' && (
-            <div className="p-4 bg-awder-sable/40 border border-awder-sable rounded-2xl flex gap-2">
-              <button
-                onClick={() => setUserMode('voyageur')}
-                className={`flex-1 py-4 rounded-2xl font-semibold text-xs uppercase tracking-widest transition-all ${userMode === 'voyageur' ? 'bg-awder-brun text-white shadow-xl' : 'text-awder-grisbrun'}`}
-              >
-                Voyageur
-              </button>
-              <button
-                onClick={() => setUserMode('hote')}
-                className={`flex-1 py-4 rounded-2xl font-semibold text-xs uppercase tracking-widest transition-all relative overflow-hidden ${userMode === 'hote' ? 'bg-awder-ocre text-white shadow-xl' : 'text-awder-ocre/60'}`}
-              >
-                <div className="flex items-center justify-center gap-2">
-                  <PlusCircle className="w-4 h-4" />
-                  Hôte Koron
-                </div>
-              </button>
-            </div>
-          )}
+          {/* La bascule Voyage ⇄ Hôte vit désormais dans l'en-tête (header). */}
 
           <div className="grid grid-cols-1 gap-4">
             <ProfileLink 
