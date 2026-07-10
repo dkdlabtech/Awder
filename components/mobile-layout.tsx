@@ -4,7 +4,7 @@ import React from 'react';
 import Image from 'next/image';
 import { useRouter, usePathname } from 'next/navigation';
 import { motion, AnimatePresence } from 'motion/react';
-import { Search, Calendar, MessageSquare, User, ArrowLeftRight, Sparkles } from 'lucide-react';
+import { Search, Calendar, MessageSquare, User, ArrowLeftRight, MapPinned } from 'lucide-react';
 
 interface MobileLayoutProps {
   children: React.ReactNode;
@@ -130,10 +130,10 @@ export const MobileLayout = ({
         </main>
 
         {/* Bottom Nav */}
-        <nav className="fixed bottom-0 w-full max-w-md bg-white/95 backdrop-blur-md border-t border-awder-sable px-3 py-3 flex justify-between items-center z-20">
+        <nav className="fixed bottom-0 w-full max-w-md bg-white/95 backdrop-blur-md border-t border-awder-sable px-3 pt-2 pb-4 flex justify-between items-end z-20">
           <NavButton icon={<Search className="w-5 h-5" />} label="Explorer" active={activeTab === 'home'} onClick={() => navigate('home')} />
           <NavButton icon={<Calendar className="w-5 h-5" />} label="Réserves" active={activeTab === 'bookings'} onClick={() => navigate('bookings')} />
-          <NavButton icon={<Sparkles className="w-5 h-5" />} label="Bons plans" active={activeTab === 'deals'} onClick={() => navigate('deals')} />
+          <RaisedNavButton icon={<MapPinned className="w-6 h-6" />} label="Guide" active={activeTab === 'deals'} onClick={() => navigate('deals')} />
           <NavButton icon={<MessageSquare className="w-5 h-5" />} label="Messages" active={activeTab === 'messages'} onClick={() => navigate('messages')} />
           <NavButton icon={<User className="w-5 h-5" />} label="Profil" active={activeTab === 'profile'} onClick={() => navigate('profile')} />
         </nav>
@@ -161,5 +161,31 @@ const NavButton = ({
       {icon}
     </div>
     <span className="awder-label text-[8px] leading-none">{label}</span>
+  </button>
+);
+
+// Onglet central surélevé (bouton ocre qui dépasse la barre)
+const RaisedNavButton = ({
+  icon,
+  label,
+  active,
+  onClick,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) => (
+  <button
+    onClick={onClick}
+    className="flex-1 flex flex-col items-center gap-1.5 active:scale-95 transition-all"
+  >
+    <div
+      className={`w-14 h-14 -mt-8 rounded-full grid place-items-center text-white border-[5px] border-awder-offwhite transition-all ${active ? 'bg-awder-ocre' : 'bg-awder-brun'}`}
+      style={{ boxShadow: '0 12px 22px -8px rgba(166,75,42,0.7)' }}
+    >
+      {icon}
+    </div>
+    <span className={`awder-label text-[8px] leading-none ${active ? 'text-awder-ocre' : 'text-awder-grisbrun'}`}>{label}</span>
   </button>
 );

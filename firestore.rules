@@ -249,6 +249,12 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // ── ✨ AMBASSADEURS GUIDE (personnes physiques, curés par l'admin) ─────────
+    match /guideAmbassadors/{ambId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
     // ── ✨ VISIT REQUESTS (nouveau) — agents terrain ───────────────────────────
     match /visitRequests/{visitId} {
       allow read: if isSignedIn() && (

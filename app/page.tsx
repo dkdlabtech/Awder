@@ -54,7 +54,12 @@ import {
   Zap,
   Droplets,
   Wifi,
-  Search
+  Search,
+  MapPinned,
+  ShoppingBasket,
+  PartyPopper,
+  Tag,
+  Compass
 } from 'lucide-react';
 import { 
   collection, 
@@ -700,15 +705,16 @@ export default function HomeView() {
   const [welcomeCardBooking, setWelcomeCardBooking] = useState<any>(null);
   const [showAskQuestion, setShowAskQuestion] = useState(false);
 
-  // ✨ Bons plans géolocalisés — curés par Awder + partenaires (lecture connectés)
+  // ✨ Guide géolocalisé — bons plans curés (Awder + partenaires) + ambassadeurs (lecture connectés)
   const [localDeals, setLocalDeals] = useState<any[]>([]);
+  const [guideAmbassadors, setGuideAmbassadors] = useState<any[]>([]);
   useEffect(() => {
-    if (!user) { setLocalDeals([]); return; }
-    const q = query(collection(db, 'localDeals'), where('active', '==', true));
-    const unsub = onSnapshot(q, (snap) => {
-      setLocalDeals(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    }, () => setLocalDeals([]));
-    return () => unsub();
+    if (!user) { setLocalDeals([]); setGuideAmbassadors([]); return; }
+    const unsubDeals = onSnapshot(query(collection(db, 'localDeals'), where('active', '==', true)),
+      (snap) => setLocalDeals(snap.docs.map(d => ({ id: d.id, ...d.data() }))), () => setLocalDeals([]));
+    const unsubAmb = onSnapshot(query(collection(db, 'guideAmbassadors'), where('active', '==', true)),
+      (snap) => setGuideAmbassadors(snap.docs.map(d => ({ id: d.id, ...d.data() }))), () => setGuideAmbassadors([]));
+    return () => { unsubDeals(); unsubAmb(); };
   }, [user]);
 
   // ✨ Envoi d'une question pré-définie à l'hôte (ouvre la conversation en mode restreint)
@@ -2238,22 +2244,34 @@ export default function HomeView() {
             .filter(Boolean)
         )) as string[];
         const hasBooked = stayCities.length > 0;
+        const cityMatch = (c?: string) => stayCities.some(sc => (c || '').toLowerCase() === sc.toLowerCase());
         const matched = localDeals
-          .filter((d: any) => stayCities.some(c => (d.city || '').toLowerCase() === c.toLowerCase()))
+          .filter((d: any) => cityMatch(d.city))
           .sort((a: any, b: any) => (b.sponsored ? 1 : 0) - (a.sponsored ? 1 : 0));
+        const ambassadors = guideAmbassadors.filter((a: any) => cityMatch(a.city));
+
+        // Icône selon le type de bon plan
+        const dealIcon = (type: string) => {
+          const t = (type || '').toLowerCase();
+          if (t.includes('marché') || t.includes('marche')) return <ShoppingBasket className="w-5 h-5" />;
+          if (t.includes('distraction') || t.includes('loisir') || t.includes('sortie') || t.includes('nightlife') || t.includes('attraction')) return <PartyPopper className="w-5 h-5" />;
+          if (t.includes('réduction') || t.includes('reduction')) return <Tag className="w-5 h-5" />;
+          if (t.includes('expérience') || t.includes('experience')) return <Compass className="w-5 h-5" />;
+          return <Utensils className="w-5 h-5" />;
+        };
 
         return (
           <div className="px-6 py-10 space-y-6 pb-32">
             <div className="space-y-1">
               <p className="awder-label text-awder-gold">Autour de votre séjour</p>
-              <h2 className="font-display text-3xl font-semibold text-awder-brun tracking-tight">Bons plans</h2>
-              <p className="text-sm text-awder-grisbrun">Restaurants, marchés et réductions près de chez vous — sélectionnés par Awder.</p>
+              <h2 className="font-display text-3xl font-semibold text-awder-brun tracking-tight">Guide</h2>
+              <p className="text-sm text-awder-grisbrun">Bonnes adresses, distractions, réductions et guides locaux — sélectionnés par Awder.</p>
             </div>
 
             {!user ? (
               <EmptyState
-                icon={<Sparkles className="w-8 h-8" />}
-                title="Connectez-vous pour les bons plans"
+                icon={<MapPinned className="w-8 h-8" />}
+                title="Connectez-vous pour votre guide"
                 sub="Les bonnes adresses autour de votre séjour s'affichent une fois connecté."
                 action={<button onClick={() => setShowLoginModal(true)} className="px-6 py-3 bg-awder-ocre text-white rounded-xl font-semibold text-sm">Se connecter</button>}
               />
@@ -2261,40 +2279,83 @@ export default function HomeView() {
               <EmptyState
                 icon={<Lock className="w-8 h-8" />}
                 title="Réservez pour débloquer"
-                sub="Dès votre première réservation payée, découvrez les meilleures adresses autour du lieu — pensé pour la diaspora et les visiteurs."
+                sub="Dès votre première réservation payée, découvrez les meilleures adresses et des guides locaux autour du lieu — pensé pour la diaspora et les visiteurs."
                 action={<button onClick={() => setActiveTab('home')} className="px-6 py-3 bg-awder-ocre text-white rounded-xl font-semibold text-sm">Explorer les lieux</button>}
               />
-            ) : matched.length === 0 ? (
+            ) : (matched.length === 0 && ambassadors.length === 0) ? (
               <EmptyState
                 icon={<MapPin className="w-8 h-8" />}
                 title={`Bientôt à ${stayCities[0]}`}
-                sub="Nous ajoutons des bons plans dans votre ville. Revenez très vite !"
+                sub="Nous ajoutons des bons plans et des guides dans votre ville. Revenez très vite !"
               />
             ) : (
-              <div className="space-y-3">
-                {matched.map((d: any) => (
-                  <div key={d.id} className="p-4 bg-white border border-awder-sable rounded-2xl flex items-start gap-3.5">
-                    <span className="w-11 h-11 shrink-0 rounded-xl bg-awder-ocre/10 text-awder-ocre grid place-items-center">
-                      <Utensils className="w-5 h-5" />
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <p className="font-semibold text-sm text-awder-brun">{d.title}</p>
-                        {d.sponsored && <span className="px-2 py-0.5 bg-awder-gold text-awder-brun-deep rounded-full text-[10px] font-semibold">Partenaire</span>}
-                      </div>
-                      <p className="text-xs text-awder-grisbrun mt-0.5">
-                        {[d.type, d.neighborhood, d.distance].filter(Boolean).join(' · ')}
-                      </p>
-                      {d.description && <p className="text-[13px] text-awder-brun/80 mt-1.5 leading-relaxed">{d.description}</p>}
-                      {d.discount && (
-                        <span className="inline-block mt-2 px-2.5 py-1 bg-awder-bogolan/12 text-awder-bogolan rounded-full text-xs font-semibold">
-                          {d.discount}
-                        </span>
-                      )}
+              <div className="space-y-8">
+                {/* Ambassadeurs Guide — personnes physiques */}
+                {ambassadors.length > 0 && (
+                  <div className="space-y-3">
+                    <div>
+                      <h3 className="font-semibold text-awder-brun text-lg">Ambassadeurs guides</h3>
+                      <p className="awder-label text-awder-gold mt-0.5">Des locaux pour vous accompagner</p>
                     </div>
+                    {ambassadors.map((a: any) => (
+                      <div key={a.id} className="p-4 bg-white border border-awder-sable rounded-2xl flex items-center gap-3.5">
+                        <div className="w-12 h-12 shrink-0 rounded-full bg-awder-brun text-awder-gold-soft grid place-items-center font-display font-semibold text-lg">
+                          {(a.name || 'G')[0]}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="font-semibold text-sm text-awder-brun flex items-center gap-2">
+                            {a.name}
+                            {a.verified && <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-awder-gold text-awder-brun-deep rounded-full text-[10px] font-semibold"><ShieldCheck className="w-3 h-3" /> Koron</span>}
+                          </p>
+                          <p className="text-xs text-awder-grisbrun mt-0.5">{[a.specialty, a.neighborhood].filter(Boolean).join(' · ')}</p>
+                          {a.bio && <p className="text-[13px] text-awder-brun/80 mt-1 leading-relaxed">{a.bio}</p>}
+                        </div>
+                        {a.whatsapp && (
+                          <a
+                            href={`https://wa.me/${(a.whatsapp || '').replace(/[^0-9]/g, '')}`}
+                            target="_blank" rel="noopener noreferrer"
+                            className="shrink-0 px-3.5 py-2 bg-awder-ocre text-white rounded-lg text-xs font-semibold"
+                          >
+                            Contacter
+                          </a>
+                        )}
+                      </div>
+                    ))}
                   </div>
-                ))}
-                <p className="text-[11px] text-awder-grisbrun text-center pt-2">Awder ne cesse d&apos;ajouter de nouveaux partenaires près de vous.</p>
+                )}
+
+                {/* Bons plans */}
+                {matched.length > 0 && (
+                  <div className="space-y-3">
+                    <div>
+                      <h3 className="font-semibold text-awder-brun text-lg">Bonnes adresses</h3>
+                      <p className="awder-label text-awder-gold mt-0.5">Restos, distractions &amp; réductions</p>
+                    </div>
+                    {matched.map((d: any) => (
+                      <div key={d.id} className="p-4 bg-white border border-awder-sable rounded-2xl flex items-start gap-3.5">
+                        <span className="w-11 h-11 shrink-0 rounded-xl bg-awder-ocre/10 text-awder-ocre grid place-items-center">
+                          {dealIcon(d.type)}
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <p className="font-semibold text-sm text-awder-brun">{d.title}</p>
+                            {d.sponsored && <span className="px-2 py-0.5 bg-awder-gold text-awder-brun-deep rounded-full text-[10px] font-semibold">Partenaire</span>}
+                          </div>
+                          <p className="text-xs text-awder-grisbrun mt-0.5">
+                            {[d.type, d.neighborhood, d.distance].filter(Boolean).join(' · ')}
+                          </p>
+                          {d.description && <p className="text-[13px] text-awder-brun/80 mt-1.5 leading-relaxed">{d.description}</p>}
+                          {d.discount && (
+                            <span className="inline-block mt-2 px-2.5 py-1 bg-awder-bogolan/12 text-awder-bogolan rounded-full text-xs font-semibold">
+                              {d.discount}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <p className="text-[11px] text-awder-grisbrun text-center">Awder ne cesse d&apos;ajouter de nouveaux partenaires et guides près de vous.</p>
               </div>
             )}
           </div>
