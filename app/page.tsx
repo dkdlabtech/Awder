@@ -1533,7 +1533,7 @@ export default function HomeView() {
                   </div>
                 ) : (
                   /* Standard daily calendar — real-date version */
-                  <div className="p-8 bg-white border border-awder-sable rounded-2xl shadow-sm">
+                  <div className="p-4 bg-white border border-awder-sable rounded-2xl shadow-sm">
                     <RealCalendar
                       value={dateRange}
                       onChange={setDateRange}
