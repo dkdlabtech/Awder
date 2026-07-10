@@ -1,11 +1,11 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Search, Palmtree, PartyPopper, Briefcase, Sparkles } from 'lucide-react';
+import { Search, Palmtree, PartyPopper, Briefcase, Sparkles, Compass } from 'lucide-react';
 
 export interface SearchFiltersValue {
   text: string;
-  category: 'all' | 'detente' | 'events' | 'business' | 'insolite';
+  category: 'all' | 'detente' | 'events' | 'business' | 'insolite' | 'experiences';
 }
 
 interface SearchFiltersProps {
@@ -16,6 +16,7 @@ const CATEGORIES = [
   { id: 'detente' as const, label: 'Détente', icon: <Palmtree className="w-5 h-5" /> },
   { id: 'events' as const, label: 'Événements', icon: <PartyPopper className="w-5 h-5" /> },
   { id: 'business' as const, label: 'Business', icon: <Briefcase className="w-5 h-5" /> },
+  { id: 'experiences' as const, label: 'Expériences', icon: <Compass className="w-5 h-5" /> },
   { id: 'insolite' as const, label: 'Insolite', icon: <Sparkles className="w-5 h-5" /> },
 ];
 
@@ -38,7 +39,7 @@ export const SearchFilters = ({ onSearch }: SearchFiltersProps) => {
           value={text}
           onChange={(e) => setText(e.target.value)}
           placeholder="Où voulez-vous Awder aujourd'hui ?"
-          className="w-full pl-6 pr-16 py-4 bg-white rounded-full border-2 border-slate-100 focus:border-awder-gold outline-none transition-all shadow-sm text-awder-brun font-medium placeholder:text-slate-400"
+          className="w-full pl-6 pr-16 py-4 bg-white rounded-full border-2 border-awder-sable focus:border-awder-gold outline-none transition-all shadow-sm text-awder-brun font-medium placeholder:text-awder-grisbrun"
         />
         <button
           type="button"
@@ -49,25 +50,25 @@ export const SearchFilters = ({ onSearch }: SearchFiltersProps) => {
         </button>
       </div>
 
-      {/* Categories */}
-      <div className="flex gap-6 overflow-x-auto pb-4 no-scrollbar">
+      {/* Categories — les 5 tiennent sur l'écran, aucune n'est coupée */}
+      <div className="grid grid-cols-5 gap-1.5 pt-1">
         {CATEGORIES.map((cat) => {
           const isActive = activeCat === cat.id;
           return (
             <button
               key={cat.id}
               onClick={() => setActiveCat(isActive ? 'all' : cat.id)}
-              className={`flex flex-col items-center gap-2 min-w-[70px] transition-all group`}
+              className="flex flex-col items-center gap-1.5 transition-all"
             >
-              <div className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all ${
+              <div className={`w-full aspect-square max-w-[56px] rounded-2xl flex items-center justify-center transition-all ${
                 isActive
-                  ? 'bg-awder-ocre text-white shadow-xl shadow-awder-ocre/20 -translate-y-1'
-                  : 'bg-white text-slate-400 border border-slate-100 hover:border-awder-gold'
+                  ? 'bg-awder-ocre text-white shadow-[0_10px_20px_-8px_rgba(166,75,42,0.5)]'
+                  : 'bg-white text-awder-grisbrun border border-awder-sable'
               }`}>
-                {cat.icon}
+                {React.cloneElement(cat.icon, { className: 'w-[18px] h-[18px]' })}
               </div>
-              <span className={`text-[10px] font-bold uppercase tracking-wider transition-colors ${
-                isActive ? 'text-awder-ocre' : 'text-slate-400'
+              <span className={`text-[9px] font-semibold text-center leading-tight transition-colors ${
+                isActive ? 'text-awder-ocre' : 'text-awder-grisbrun'
               }`}>
                 {cat.label}
               </span>

@@ -108,11 +108,11 @@ export default function LoginModal({
       <motion.div
         initial={{ scale: 0.9, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
-        className="w-full max-w-md bg-white rounded-[50px] overflow-hidden shadow-2xl relative max-h-[95vh] overflow-y-auto"
+        className="w-full max-w-md bg-white rounded-3xl overflow-hidden shadow-2xl relative max-h-[95vh] overflow-y-auto"
       >
         <button
           onClick={onClose}
-          className="absolute top-8 right-8 p-3 bg-slate-50 text-slate-400 rounded-2xl hover:bg-slate-100 transition-all z-10"
+          className="absolute top-8 right-8 p-3 bg-awder-sable/40 text-awder-grisbrun rounded-2xl hover:bg-awder-sable transition-all z-10"
         >
           <X className="w-5 h-5" />
         </button>
@@ -124,27 +124,27 @@ export default function LoginModal({
               <User className="w-10 h-10" />
             </div>
             <div className="space-y-2">
-              <h3 className="text-3xl font-black text-awder-brun tracking-tighter leading-none">
+              <h3 className="text-3xl font-semibold text-awder-brun tracking-tighter leading-none">
                 Bienvenue chez Awder
               </h3>
-              <p className="text-sm font-bold text-slate-400 tracking-tight italic">
+              <p className="text-sm font-bold text-awder-grisbrun tracking-tight italic">
                 {contextMessage ?? 'Connectez-vous pour continuer.'}
               </p>
             </div>
           </div>
 
           {/* Tab Email / WhatsApp */}
-          <div className="flex bg-slate-50 rounded-2xl p-1">
+          <div className="flex bg-awder-sable/40 rounded-2xl p-1">
             <button
               onClick={() => {
                 setTab('email');
                 setStep('form');
                 setError('');
               }}
-              className={`flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${
+              className={`flex-1 py-3 rounded-xl font-semibold text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${
                 tab === 'email'
                   ? 'bg-white text-awder-brun shadow-sm'
-                  : 'text-slate-400'
+                  : 'text-awder-grisbrun'
               }`}
             >
               <Mail className="w-4 h-4" /> Email
@@ -155,10 +155,10 @@ export default function LoginModal({
                 setStep('form');
                 setError('');
               }}
-              className={`flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${
+              className={`flex-1 py-3 rounded-xl font-semibold text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${
                 tab === 'whatsapp'
                   ? 'bg-white text-awder-brun shadow-sm'
-                  : 'text-slate-400'
+                  : 'text-awder-grisbrun'
               }`}
             >
               <MessageSquare className="w-4 h-4" /> WhatsApp
@@ -175,16 +175,16 @@ export default function LoginModal({
           {/* Email */}
           {tab === 'email' && (
             <div className="space-y-4">
-              <div className="flex bg-slate-50 rounded-2xl p-1">
+              <div className="flex bg-awder-sable/40 rounded-2xl p-1">
                 <button
                   onClick={() => {
                     setMode('signin');
                     setError('');
                   }}
-                  className={`flex-1 py-2 rounded-xl font-black text-xs uppercase tracking-widest transition-all ${
+                  className={`flex-1 py-2 rounded-xl font-semibold text-xs uppercase tracking-widest transition-all ${
                     mode === 'signin'
                       ? 'bg-white text-awder-brun shadow-sm'
-                      : 'text-slate-400'
+                      : 'text-awder-grisbrun'
                   }`}
                 >
                   Connexion
@@ -194,10 +194,10 @@ export default function LoginModal({
                     setMode('signup');
                     setError('');
                   }}
-                  className={`flex-1 py-2 rounded-xl font-black text-xs uppercase tracking-widest transition-all ${
+                  className={`flex-1 py-2 rounded-xl font-semibold text-xs uppercase tracking-widest transition-all ${
                     mode === 'signup'
                       ? 'bg-white text-awder-brun shadow-sm'
-                      : 'text-slate-400'
+                      : 'text-awder-grisbrun'
                   }`}
                 >
                   Inscription
@@ -206,44 +206,44 @@ export default function LoginModal({
 
               {mode === 'signup' && (
                 <div className="relative group">
-                  <User className="absolute left-6 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-300 group-focus-within:text-awder-ocre" />
+                  <User className="absolute left-6 top-1/2 -translate-y-1/2 w-5 h-5 text-awder-grisbrun/60 group-focus-within:text-awder-ocre" />
                   <input
                     type="text"
                     placeholder="Votre prénom"
                     value={displayName}
                     onChange={(e) => setDisplayName(e.target.value)}
-                    className="w-full p-5 pl-16 bg-slate-50 border border-slate-100 rounded-[24px] outline-none focus:border-awder-gold font-bold text-awder-brun"
+                    className="w-full p-5 pl-16 bg-awder-sable/40 border border-awder-sable rounded-2xl outline-none focus:border-awder-gold font-bold text-awder-brun"
                   />
                 </div>
               )}
 
               <div className="relative group">
-                <Mail className="absolute left-6 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-300 group-focus-within:text-awder-ocre" />
+                <Mail className="absolute left-6 top-1/2 -translate-y-1/2 w-5 h-5 text-awder-grisbrun/60 group-focus-within:text-awder-ocre" />
                 <input
                   type="email"
                   placeholder="votre@email.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="w-full p-5 pl-16 bg-slate-50 border border-slate-100 rounded-[24px] outline-none focus:border-awder-gold font-bold text-awder-brun"
+                  className="w-full p-5 pl-16 bg-awder-sable/40 border border-awder-sable rounded-2xl outline-none focus:border-awder-gold font-bold text-awder-brun"
                 />
               </div>
 
               <div className="relative group">
-                <ShieldCheck className="absolute left-6 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-300 group-focus-within:text-awder-ocre" />
+                <ShieldCheck className="absolute left-6 top-1/2 -translate-y-1/2 w-5 h-5 text-awder-grisbrun/60 group-focus-within:text-awder-ocre" />
                 <input
                   type="password"
                   placeholder="Mot de passe"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleEmailAuth()}
-                  className="w-full p-5 pl-16 bg-slate-50 border border-slate-100 rounded-[24px] outline-none focus:border-awder-gold font-bold text-awder-brun"
+                  className="w-full p-5 pl-16 bg-awder-sable/40 border border-awder-sable rounded-2xl outline-none focus:border-awder-gold font-bold text-awder-brun"
                 />
               </div>
 
               <button
                 onClick={handleEmailAuth}
                 disabled={loading || !email || !password}
-                className="w-full py-6 bg-awder-ocre text-white rounded-[32px] font-black text-sm uppercase tracking-[0.2em] shadow-xl shadow-awder-ocre/20 active:scale-95 disabled:opacity-50"
+                className="w-full py-6 bg-awder-ocre text-white rounded-2xl font-semibold text-sm uppercase tracking-[0.2em] shadow-xl shadow-awder-ocre/20 active:scale-95 disabled:opacity-50"
               >
                 {loading ? (
                   <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin mx-auto" />
@@ -261,23 +261,23 @@ export default function LoginModal({
             <div className="space-y-4">
               {step === 'form' ? (
                 <>
-                  <p className="text-[10px] font-black text-awder-gold uppercase tracking-[0.4em] text-center">
+                  <p className="text-[10px] font-semibold text-awder-gold uppercase tracking-[0.4em] text-center">
                     Votre numéro WhatsApp
                   </p>
                   <div className="relative group">
-                    <Phone className="absolute left-6 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-300 group-focus-within:text-awder-ocre" />
+                    <Phone className="absolute left-6 top-1/2 -translate-y-1/2 w-5 h-5 text-awder-grisbrun/60 group-focus-within:text-awder-ocre" />
                     <input
                       type="tel"
                       placeholder="+223 70 00 00 00"
                       value={phone}
                       onChange={(e) => setPhone(e.target.value)}
-                      className="w-full p-5 pl-16 bg-slate-50 border border-slate-100 rounded-[24px] outline-none focus:border-awder-gold font-bold text-awder-brun"
+                      className="w-full p-5 pl-16 bg-awder-sable/40 border border-awder-sable rounded-2xl outline-none focus:border-awder-gold font-bold text-awder-brun"
                     />
                   </div>
                   <button
                     onClick={handleSendOtp}
                     disabled={loading || !phone}
-                    className="w-full py-6 bg-awder-ocre text-white rounded-[32px] font-black text-sm uppercase tracking-[0.2em] shadow-xl shadow-awder-ocre/20 active:scale-95 disabled:opacity-50"
+                    className="w-full py-6 bg-awder-ocre text-white rounded-2xl font-semibold text-sm uppercase tracking-[0.2em] shadow-xl shadow-awder-ocre/20 active:scale-95 disabled:opacity-50"
                   >
                     {loading ? (
                       <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin mx-auto" />
@@ -288,7 +288,7 @@ export default function LoginModal({
                 </>
               ) : (
                 <>
-                  <p className="text-[10px] font-black text-awder-gold uppercase tracking-[0.4em] text-center">
+                  <p className="text-[10px] font-semibold text-awder-gold uppercase tracking-[0.4em] text-center">
                     Code reçu par WhatsApp
                   </p>
                   {devCodeHint && (
@@ -297,20 +297,20 @@ export default function LoginModal({
                     </p>
                   )}
                   <div className="relative group">
-                    <ShieldCheck className="absolute left-6 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-300 group-focus-within:text-awder-ocre" />
+                    <ShieldCheck className="absolute left-6 top-1/2 -translate-y-1/2 w-5 h-5 text-awder-grisbrun/60 group-focus-within:text-awder-ocre" />
                     <input
                       type="text"
                       placeholder="123456"
                       value={otp}
                       onChange={(e) => setOtp(e.target.value)}
                       onKeyDown={(e) => e.key === 'Enter' && handleVerifyOtp()}
-                      className="w-full p-5 pl-16 bg-slate-50 border border-slate-100 rounded-[24px] outline-none focus:border-awder-gold font-bold text-awder-brun text-center text-2xl tracking-widest"
+                      className="w-full p-5 pl-16 bg-awder-sable/40 border border-awder-sable rounded-2xl outline-none focus:border-awder-gold font-bold text-awder-brun text-center text-2xl tracking-widest"
                     />
                   </div>
                   <button
                     onClick={handleVerifyOtp}
                     disabled={loading || !otp}
-                    className="w-full py-6 bg-awder-ocre text-white rounded-[32px] font-black text-sm uppercase tracking-[0.2em] shadow-xl shadow-awder-ocre/20 active:scale-95 disabled:opacity-50"
+                    className="w-full py-6 bg-awder-ocre text-white rounded-2xl font-semibold text-sm uppercase tracking-[0.2em] shadow-xl shadow-awder-ocre/20 active:scale-95 disabled:opacity-50"
                   >
                     {loading ? (
                       <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin mx-auto" />
@@ -323,7 +323,7 @@ export default function LoginModal({
                       setStep('form');
                       setOtp('');
                     }}
-                    className="w-full text-xs font-bold text-slate-400"
+                    className="w-full text-xs font-bold text-awder-grisbrun"
                   >
                     ← Changer de numéro
                   </button>
