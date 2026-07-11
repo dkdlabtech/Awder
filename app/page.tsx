@@ -227,6 +227,13 @@ const MOCK_LISTINGS = [
   }
 ];
 
+// ✨ Caution proportionnelle : au moins le forfait de l'hôte, sinon 25 % du séjour.
+// Ainsi un long séjour (ex. 675 000 F) est couvert par une caution qui scale.
+const CAUTION_RATE = 0.25;
+function computeCaution(flat: number | undefined, stayPrice: number): number {
+  return Math.max(Number(flat) || 0, Math.round((Number(stayPrice) || 0) * CAUTION_RATE));
+}
+
 // ✨ Questions pré-définies avant réservation — aucun texte libre (anti-contournement)
 const PREDEFINED_QUESTIONS = [
   { id: 'dispo', icon: <Calendar className="w-4 h-4" />, text: 'Ce lieu est-il vraiment disponible pour mes dates ?' },
@@ -323,6 +330,10 @@ export default function HomeView() {
   const filteredListings = React.useMemo(() => {
     const q = filters.text.trim().toLowerCase();
     return listings.filter((l) => {
+      // ✨ Modération : n'afficher que les annonces approuvées (ou anciennes sans champ).
+      // Les brouillons / en attente / rejetées ne s'affichent JAMAIS côté voyageur.
+      const mod = l.moderationStatus;
+      if (mod && mod !== 'approved') return false;
       // Category filter
       if (filters.category === 'detente' && l.type !== 'accommodation') return false;
       if (filters.category === 'events' && l.type !== 'event') return false;
@@ -461,7 +472,7 @@ export default function HomeView() {
         : 0;
       const stayPrice = selectedListing.price * (isHourly ? durationHours : durationNights);
       const servicesPrice = selectedServices.reduce((acc, s) => acc + (ADD_ONS.find(a => a.id === s)?.price || 0), 0);
-      const cautionAmount = selectedListing.cautionAmount || 0;
+      const cautionAmount = computeCaution(selectedListing.cautionAmount, stayPrice);
       const totalPrice = stayPrice + servicesPrice + cautionAmount;
       const isoStart = isHourly
         ? `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(bookingDate).padStart(2, '0')}T${String(startHour).padStart(2, '0')}:00:00`
@@ -930,7 +941,7 @@ export default function HomeView() {
 
       const stayPrice = selectedListing.price * (isHourly ? durationHours : durationNights);
       const servicesPrice = selectedServices.reduce((acc, s) => acc + (ADD_ONS.find(a => a.id === s)?.price || 0), 0);
-      const cautionAmount = selectedListing.cautionAmount || 0;
+      const cautionAmount = computeCaution(selectedListing.cautionAmount, stayPrice);
       // Le voyageur paie le prix affiché par l'hôte, sans frais visibles.
       // La commission Awder est prélevée côté hôte sur le versement (non affichée au client).
       const AWDER_COMMISSION_RATE = 0.05;
@@ -1309,8 +1320,9 @@ export default function HomeView() {
                   <p className="text-2xl font-semibold text-awder-brun">{formatPrice(selectedListing.price, selectedCurrency)}</p>
                 </div>
                 <div className="p-6 bg-white rounded-2xl border border-awder-sable shadow-sm space-y-1">
-                  <p className="text-[10px] text-awder-grisbrun font-semibold uppercase tracking-[0.2em] leading-none">Caution</p>
-                  <p className="text-2xl font-semibold text-awder-ocre">+{formatPrice(selectedListing.cautionAmount || 0, selectedCurrency)}</p>
+                  <p className="text-[10px] text-awder-grisbrun font-semibold uppercase tracking-[0.2em] leading-none">Caution (min.)</p>
+                  <p className="text-2xl font-semibold text-awder-ocre">dès {formatPrice(selectedListing.cautionAmount || 0, selectedCurrency)}</p>
+                  <p className="text-[9px] text-awder-grisbrun leading-tight">Ajustée selon la durée, remboursable</p>
                 </div>
               </div>
 
@@ -1708,7 +1720,7 @@ export default function HomeView() {
                   <div className="space-y-1.5">
                     <h4 className="text-base font-semibold text-awder-brun">Sira-Djou <span className="awder-label text-awder-ocre ml-1">Sécurité Awder</span></h4>
                     <p className="text-[13px] text-awder-grisbrun leading-relaxed">
-                      Une caution de <strong className="text-awder-ocre font-semibold">{formatPrice(selectedListing.cautionAmount || 0, selectedCurrency)}</strong> sera retenue temporairement sous séquestre, puis libérée sur votre portefeuille 24 h après le check-out.
+                      Une caution (dès <strong className="text-awder-ocre font-semibold">{formatPrice(selectedListing.cautionAmount || 0, selectedCurrency)}</strong>, ajustée à la durée du séjour) est retenue sous séquestre, puis rendue sur votre portefeuille après confirmation du départ (ou automatiquement 24 h après).
                     </p>
                   </div>
                 </div>
@@ -1735,7 +1747,7 @@ export default function HomeView() {
                    
                    const stayPrice = selectedListing.price * (isHourly ? hours : (nights || 1));
                    const servicesPrice = selectedServices.reduce((acc, s) => acc + (ADD_ONS.find(a => a.id === s)?.price || 0), 0);
-                   const cautionAmount = selectedListing.cautionAmount || 0;
+                   const cautionAmount = computeCaution(selectedListing.cautionAmount, stayPrice);
                    const totalPrice = stayPrice + servicesPrice + cautionAmount;
 
                    // Conflit calculé via les vraies plages réservées (bookedRanges)
@@ -1864,7 +1876,7 @@ export default function HomeView() {
                   const hours = isHourly ? (endHour - startHour) : 0;
                   const nights = !isHourly && dateRange.start && dateRange.end ? differenceInCalendarDays(dateRange.end, dateRange.start) : 1;
                   const servicesPrice = selectedServices.reduce((acc, s) => acc + (ADD_ONS.find(a => a.id === s)?.price || 0), 0);
-                  const cautionAmount = selectedListing.cautionAmount || 0;
+                  const cautionAmount = computeCaution(selectedListing.cautionAmount, selectedListing.price * (isHourly ? hours : nights));
                   const totalPrice = (selectedListing.price * (isHourly ? hours : nights)) + servicesPrice + cautionAmount;
 
                   return (
@@ -1958,7 +1970,7 @@ export default function HomeView() {
                 const nights = !isHourly && dateRange.start && dateRange.end ? differenceInCalendarDays(dateRange.end, dateRange.start) : 1;
                 const stayPrice = selectedListing.price * (isHourly ? hours : nights);
                 const servicesPrice = selectedServices.reduce((acc, s) => acc + (ADD_ONS.find(a => a.id === s)?.price || 0), 0);
-                const cautionAmount = selectedListing.cautionAmount || 0;
+                const cautionAmount = computeCaution(selectedListing.cautionAmount, stayPrice);
                 const totalPrice = stayPrice + servicesPrice + cautionAmount;
                 const pol = (selectedListing.cancellationPolicy as string) || 'moderate';
                 const polLabel = { flexible: 'Flexible — remboursement intégral jusqu\'à 24 h avant', moderate: 'Modérée — remboursement 50 % si annulation < 48 h', strict: 'Stricte — aucun remboursement < 7 jours' }[pol] ?? '';
@@ -2695,12 +2707,27 @@ export default function HomeView() {
                       Check-out
                     </button>
                   )}
-                  {booking.checkInStatus === 'checked_out' && booking.status === 'paid_escrow' && (
-                    <div className="flex-1 py-4 bg-awder-sable/40 text-awder-grisbrun rounded-2xl font-semibold flex items-center justify-center gap-2 text-[10px] uppercase tracking-widest text-center">
-                      <Clock className="w-4 h-4" />
-                      En attente de clôture par l&apos;hôte
-                    </div>
-                  )}
+                  {booking.checkInStatus === 'checked_out' && booking.status === 'paid_escrow' && (() => {
+                    const outAt = booking.checkOutAt ? new Date(booking.checkOutAt).getTime() : 0;
+                    const canReclaim = outAt > 0 && (Date.now() - outAt) >= 24 * 3600 * 1000;
+                    return canReclaim ? (
+                      <button
+                        onClick={async () => {
+                          try { await callBookingAction(booking.id, 'release_caution'); fetchBookings(); }
+                          catch (err: any) { alert(err.message); }
+                        }}
+                        disabled={loading}
+                        className="flex-1 py-4 bg-awder-ocre text-white rounded-xl font-semibold flex items-center justify-center gap-2 text-xs active:scale-[0.98] transition-all"
+                      >
+                        <ShieldCheck className="w-4 h-4" /> Récupérer ma caution
+                      </button>
+                    ) : (
+                      <div className="flex-1 py-4 bg-awder-sable/40 text-awder-grisbrun rounded-xl font-semibold flex items-center justify-center gap-2 text-[10px] uppercase tracking-widest text-center">
+                        <Clock className="w-4 h-4" />
+                        L&apos;hôte confirme votre départ (auto sous 24 h)
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 {/* ✨ Demande acceptée → payer pour confirmer */}
@@ -3533,15 +3560,6 @@ const HostDashboard = ({ profile, onAddListing, onViewBooking, onSwitchMode, act
             {activeSubTab === 'calendar' && 'Calendrier Koron'}
             {activeSubTab === 'settings' && 'Paramétrage'}
           </h2>
-        </div>
-        <div className="flex items-center gap-2">
-          <button 
-            onClick={onSwitchMode}
-            className="p-3 bg-white border border-awder-sable rounded-2xl shadow-sm text-awder-grisbrun flex flex-col items-center gap-1 active:scale-95 transition-all"
-          >
-            <User className="w-5 h-5 text-awder-grisbrun/60" />
-            <span className="text-[8px] font-semibold uppercase tracking-widest">VOYAGEUR</span>
-          </button>
         </div>
       </div>
 

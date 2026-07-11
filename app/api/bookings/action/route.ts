@@ -79,7 +79,7 @@ export async function POST(req: NextRequest) {
         case 'check_out': {
           if (!isGuest) throw new Error('Seul le voyageur peut faire le check-out.');
           if (b.checkInStatus !== 'checked_in') throw new Error('Pas encore checked-in.');
-          tx.update(bookingRef, { checkInStatus: 'checked_out' });
+          tx.update(bookingRef, { checkInStatus: 'checked_out', checkOutAt: new Date().toISOString() });
           tx.create(db.collection('notifications').doc(), {
             userId: b.hostId,
             title: 'Départ du voyageur',
@@ -92,10 +92,17 @@ export async function POST(req: NextRequest) {
         }
 
         case 'release_caution': {
-          // Host releases caution → host gets payout, guest gets caution back
-          if (!isHost) throw new Error('Seul l\'hôte peut libérer la caution.');
-          if (b.cautionStatus !== 'blocked') throw new Error('Caution déjà libérée ou non bloquée.');
+          // Confirmation de l'hôte → versement + caution rendue.
+          // Fallback : le voyageur peut la déclencher 24h après son départ si l'hôte n'a rien fait.
           if (b.checkInStatus !== 'checked_out') throw new Error('Voyageur pas encore parti.');
+          if (b.cautionStatus !== 'blocked') throw new Error('Caution déjà libérée ou non bloquée.');
+          const checkedOutAt = b.checkOutAt ? new Date(b.checkOutAt).getTime() : 0;
+          const delayPassed = checkedOutAt > 0 && (Date.now() - checkedOutAt) >= 24 * 3600 * 1000;
+          if (!isHost && !(isGuest && delayPassed)) {
+            throw new Error(isGuest
+              ? 'Vous pourrez récupérer votre caution 24 h après votre départ si l\'hôte n\'a pas confirmé.'
+              : 'Seul l\'hôte peut confirmer le départ.');
+          }
 
           const caution = b.cautionAmount || 0;
 
