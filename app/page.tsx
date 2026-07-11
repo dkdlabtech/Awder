@@ -2235,20 +2235,28 @@ export default function HomeView() {
         </div>
       )}
 
-      {/* ✨ Bons plans géolocalisés — connecté + a réservé */}
+      {/* ✨ Guide géolocalisé — connecté + a réservé, sensible ville + quartier */}
       {activeTab === 'deals' && (() => {
-        const stayCities = Array.from(new Set(
-          userBookings
-            .filter((b: any) => ['paid_escrow', 'completed'].includes(b.status))
-            .map((b: any) => listings.find(l => l.id === b.listingId)?.location?.city)
-            .filter(Boolean)
-        )) as string[];
+        const stayLocs = userBookings
+          .filter((b: any) => ['paid_escrow', 'completed'].includes(b.status))
+          .map((b: any) => {
+            const l = listings.find(x => x.id === b.listingId);
+            return { city: l?.location?.city, neighborhood: l?.location?.neighborhood };
+          })
+          .filter((s: any) => s.city);
+        const stayCities = Array.from(new Set(stayLocs.map((s: any) => (s.city as string).toLowerCase())));
+        const stayHoods = Array.from(new Set(stayLocs.map((s: any) => (s.neighborhood || '').toLowerCase()).filter(Boolean)));
         const hasBooked = stayCities.length > 0;
-        const cityMatch = (c?: string) => stayCities.some(sc => (c || '').toLowerCase() === sc.toLowerCase());
+        const cityMatch = (c?: string) => stayCities.includes((c || '').toLowerCase());
+        const hoodMatch = (n?: string) => !!n && stayHoods.includes((n || '').toLowerCase());
+        // score : quartier exact d'abord, puis sponsorisé
+        const rank = (x: any) => (hoodMatch(x.neighborhood) ? 2 : 0) + (x.sponsored ? 1 : 0);
         const matched = localDeals
           .filter((d: any) => cityMatch(d.city))
-          .sort((a: any, b: any) => (b.sponsored ? 1 : 0) - (a.sponsored ? 1 : 0));
-        const ambassadors = guideAmbassadors.filter((a: any) => cityMatch(a.city));
+          .sort((a: any, b: any) => rank(b) - rank(a));
+        const ambassadors = guideAmbassadors
+          .filter((a: any) => cityMatch(a.city))
+          .sort((a: any, b: any) => (hoodMatch(b.neighborhood) ? 1 : 0) - (hoodMatch(a.neighborhood) ? 1 : 0));
 
         // Icône selon le type de bon plan
         const dealIcon = (type: string) => {
@@ -2303,9 +2311,10 @@ export default function HomeView() {
                           {(a.name || 'G')[0]}
                         </div>
                         <div className="min-w-0 flex-1">
-                          <p className="font-semibold text-sm text-awder-brun flex items-center gap-2">
+                          <p className="font-semibold text-sm text-awder-brun flex items-center gap-2 flex-wrap">
                             {a.name}
                             {a.verified && <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-awder-gold text-awder-brun-deep rounded-full text-[10px] font-semibold"><ShieldCheck className="w-3 h-3" /> Koron</span>}
+                            {hoodMatch(a.neighborhood) && <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-awder-ocre/10 text-awder-ocre rounded-full text-[10px] font-semibold"><MapPin className="w-3 h-3" /> Votre quartier</span>}
                           </p>
                           <p className="text-xs text-awder-grisbrun mt-0.5">{[a.specialty, a.neighborhood].filter(Boolean).join(' · ')}</p>
                           {a.bio && <p className="text-[13px] text-awder-brun/80 mt-1 leading-relaxed">{a.bio}</p>}
@@ -2340,6 +2349,7 @@ export default function HomeView() {
                           <div className="flex items-center gap-2 flex-wrap">
                             <p className="font-semibold text-sm text-awder-brun">{d.title}</p>
                             {d.sponsored && <span className="px-2 py-0.5 bg-awder-gold text-awder-brun-deep rounded-full text-[10px] font-semibold">Partenaire</span>}
+                            {hoodMatch(d.neighborhood) && <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-awder-ocre/10 text-awder-ocre rounded-full text-[10px] font-semibold"><MapPin className="w-3 h-3" /> Votre quartier</span>}
                           </div>
                           <p className="text-xs text-awder-grisbrun mt-0.5">
                             {[d.type, d.neighborhood, d.distance].filter(Boolean).join(' · ')}
