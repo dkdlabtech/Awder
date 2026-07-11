@@ -9,22 +9,27 @@ interface KYCBody {
   selfieUrl: string;
 }
 
-async function getUidFromAuthHeader(req: NextRequest): Promise<string | null> {
+async function verifyUid(req: NextRequest): Promise<{ uid: string | null; reason?: string }> {
   const auth = req.headers.get('authorization');
-  if (!auth?.startsWith('Bearer ')) return null;
+  if (!auth?.startsWith('Bearer ')) return { uid: null, reason: 'token_absent' };
   try {
     const token = auth.slice(7);
     const decoded = await adminAuth().verifyIdToken(token);
-    return decoded.uid;
-  } catch {
-    return null;
+    return { uid: decoded.uid };
+  } catch (e: any) {
+    // Remonte la cause réelle pour diagnostiquer la config Vercel (Admin SDK)
+    return { uid: null, reason: e?.errorInfo?.code || e?.code || e?.message || 'verify_failed' };
   }
 }
 
 export async function POST(req: NextRequest) {
-  const uid = await getUidFromAuthHeader(req);
+  const { uid, reason } = await verifyUid(req);
   if (!uid) {
-    return NextResponse.json({ error: 'Non authentifié.' }, { status: 401 });
+    console.error('host kyc auth failed:', reason);
+    return NextResponse.json(
+      { error: 'Non authentifié.', reason },
+      { status: 401 }
+    );
   }
 
   try {

@@ -149,7 +149,8 @@ export default function KYCForm({
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.error ?? 'Échec de la soumission.');
+        const detail = err.reason ? ` (${err.reason})` : '';
+        throw new Error((err.error ?? 'Échec de la soumission.') + detail);
       }
 
       setStep(3);
