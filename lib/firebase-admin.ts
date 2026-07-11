@@ -6,20 +6,35 @@ import { Firestore, getFirestore } from 'firebase-admin/firestore';
 // This prevents Next.js from crashing at build time when env vars are absent.
 let _app: App | null = null;
 
+/**
+ * Normalise la clé privée quel que soit le format collé dans l'hébergeur (Vercel) :
+ *  - retire d'éventuels guillemets englobants
+ *  - convertit les \n littéraux en vrais retours à la ligne
+ *  - laisse intacts les vrais retours à la ligne
+ */
+function normalizePrivateKey(raw?: string): string | undefined {
+  if (!raw) return undefined;
+  let key = raw.trim();
+  if ((key.startsWith('"') && key.endsWith('"')) || (key.startsWith("'") && key.endsWith("'"))) {
+    key = key.slice(1, -1);
+  }
+  return key.replace(/\\n/g, '\n');
+}
+
 function app(): App {
   if (!_app) {
+    const projectId = process.env.FIREBASE_ADMIN_PROJECT_ID;
+    const clientEmail = process.env.FIREBASE_ADMIN_CLIENT_EMAIL;
+    const privateKey = normalizePrivateKey(process.env.FIREBASE_ADMIN_PRIVATE_KEY);
+    if (!projectId || !clientEmail || !privateKey) {
+      throw new Error(
+        'Firebase Admin non configuré : vérifiez FIREBASE_ADMIN_PROJECT_ID, ' +
+        'FIREBASE_ADMIN_CLIENT_EMAIL et FIREBASE_ADMIN_PRIVATE_KEY sur Vercel.'
+      );
+    }
     _app =
       getApps().find((a) => a.name === 'admin') ||
-      initializeApp(
-        {
-          credential: cert({
-            projectId: process.env.FIREBASE_ADMIN_PROJECT_ID!,
-            clientEmail: process.env.FIREBASE_ADMIN_CLIENT_EMAIL!,
-            privateKey: process.env.FIREBASE_ADMIN_PRIVATE_KEY?.replace(/\\n/g, '\n'),
-          }),
-        },
-        'admin'
-      );
+      initializeApp({ credential: cert({ projectId, clientEmail, privateKey }) }, 'admin');
   }
   return _app;
 }
