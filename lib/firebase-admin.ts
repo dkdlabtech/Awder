@@ -26,11 +26,12 @@ function app(): App {
     const projectId = process.env.FIREBASE_ADMIN_PROJECT_ID;
     const clientEmail = process.env.FIREBASE_ADMIN_CLIENT_EMAIL;
     const privateKey = normalizePrivateKey(process.env.FIREBASE_ADMIN_PRIVATE_KEY);
-    if (!projectId || !clientEmail || !privateKey) {
-      throw new Error(
-        'Firebase Admin non configuré : vérifiez FIREBASE_ADMIN_PROJECT_ID, ' +
-        'FIREBASE_ADMIN_CLIENT_EMAIL et FIREBASE_ADMIN_PRIVATE_KEY sur Vercel.'
-      );
+    const missing: string[] = [];
+    if (!projectId) missing.push('FIREBASE_ADMIN_PROJECT_ID');
+    if (!clientEmail) missing.push('FIREBASE_ADMIN_CLIENT_EMAIL');
+    if (!privateKey) missing.push('FIREBASE_ADMIN_PRIVATE_KEY');
+    if (missing.length) {
+      throw new Error(`Variable(s) vide(s) sur Vercel : ${missing.join(', ')}. Ré-enregistrez-la(les) puis Redeploy.`);
     }
     _app =
       getApps().find((a) => a.name === 'admin') ||
