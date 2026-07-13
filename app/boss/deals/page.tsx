@@ -3,7 +3,9 @@
 import { useEffect, useState } from 'react';
 import { collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc, query, orderBy } from 'firebase/firestore';
 import { bossDb as db } from '@/lib/firebase';
-import { Sparkles, Plus, Trash2, Loader2, Star, UserRound } from 'lucide-react';
+import { uploadGuideImage } from '@/lib/upload';
+import { MapPicker } from '@/components/ui/MapPicker';
+import { Sparkles, Plus, Trash2, Loader2, Star, UserRound, Camera } from 'lucide-react';
 
 interface Deal {
   id: string;
@@ -19,7 +21,8 @@ interface Deal {
 }
 
 const TYPES = ['Restaurant', 'Plat local', 'Marché', 'Distraction / Loisir', 'Sortie / Nightlife', 'Attraction', 'Expérience', 'Réduction'];
-const empty = { title: '', type: 'Restaurant', city: 'Bamako', neighborhood: '', description: '', discount: '', distance: '', sponsored: false, active: true };
+const empty = { title: '', type: 'Restaurant', city: 'Bamako', neighborhood: '', description: '', discount: '', distance: '', imageUrl: '', coordinates: null as { lat: number; lng: number } | null, sponsored: false, active: true };
+const BAMAKO = { lat: 12.6392, lng: -8.0029 };
 
 interface Ambassador {
   id: string;
@@ -32,7 +35,7 @@ interface Ambassador {
   verified?: boolean;
   active?: boolean;
 }
-const emptyAmb = { name: '', city: 'Bamako', neighborhood: '', specialty: '', bio: '', whatsapp: '', verified: false, active: true };
+const emptyAmb = { name: '', city: 'Bamako', neighborhood: '', specialty: '', bio: '', whatsapp: '', uid: '', photoUrl: '', rating: '', verified: false, active: true };
 
 export default function BossDealsPage() {
   const [deals, setDeals] = useState<Deal[]>([]);
@@ -82,6 +85,21 @@ export default function BossDealsPage() {
     finally { setSaving(false); }
   };
 
+  const [imgUp, setImgUp] = useState(false);
+  const uploadDealImg = async (file?: File) => {
+    if (!file) return;
+    setImgUp(true); setError('');
+    try { const url = await uploadGuideImage(file, 'deal'); setForm((f: any) => ({ ...f, imageUrl: url })); }
+    catch (e: any) { setError(e.message); } finally { setImgUp(false); }
+  };
+  const [ambImgUp, setAmbImgUp] = useState(false);
+  const uploadAmbImg = async (file?: File) => {
+    if (!file) return;
+    setAmbImgUp(true); setError('');
+    try { const url = await uploadGuideImage(file, 'ambassador'); setAmbForm((f: any) => ({ ...f, photoUrl: url })); }
+    catch (e: any) { setError(e.message); } finally { setAmbImgUp(false); }
+  };
+
   const toggleActive = async (d: Deal) => {
     try { await updateDoc(doc(db, 'localDeals', d.id), { active: !d.active }); } catch (e: any) { setError(e.message); }
   };
@@ -118,6 +136,26 @@ export default function BossDealsPage() {
           <input className={input} placeholder="Réduction (ex: -10% sur présentation Awder)" value={form.discount} onChange={(e) => setForm({ ...form, discount: e.target.value })} />
         </div>
         <textarea className={input} rows={2} placeholder="Description courte" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+
+        {/* Photo */}
+        <div className="flex items-center gap-3">
+          <label className="flex items-center gap-2 bg-zinc-800/50 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-300 cursor-pointer hover:border-orange-500/50">
+            <input type="file" accept="image/*" className="hidden" onChange={(e) => uploadDealImg(e.target.files?.[0])} />
+            {imgUp ? <Loader2 className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />} Photo du lieu
+          </label>
+          {form.imageUrl && <img src={form.imageUrl} alt="" className="w-14 h-14 rounded-lg object-cover border border-zinc-700" />}
+        </div>
+
+        {/* Localisation GPS — cliquez sur la carte */}
+        <div>
+          <p className="text-xs text-zinc-400 mb-1.5">Position (cliquez sur la carte pour placer le lieu) {form.coordinates && <span className="text-orange-300 font-mono">{form.coordinates.lat.toFixed(4)}, {form.coordinates.lng.toFixed(4)}</span>}</p>
+          <MapPicker
+            lat={form.coordinates?.lat ?? BAMAKO.lat}
+            lng={form.coordinates?.lng ?? BAMAKO.lng}
+            onChange={(c) => setForm((f: any) => ({ ...f, coordinates: c }))}
+          />
+        </div>
+
         <label className="flex items-center gap-2 text-sm text-zinc-300">
           <input type="checkbox" checked={form.sponsored} onChange={(e) => setForm({ ...form, sponsored: e.target.checked })} />
           <Star className="w-4 h-4 text-orange-400" /> Partenaire sponsorisé (badge + priorité d'affichage)
@@ -165,13 +203,26 @@ export default function BossDealsPage() {
           <input className={input} placeholder="Spécialité (ex: guide culturel, gastronomie)" value={ambForm.specialty} onChange={(e) => setAmbForm({ ...ambForm, specialty: e.target.value })} />
           <input className={input} placeholder="Ville" value={ambForm.city} onChange={(e) => setAmbForm({ ...ambForm, city: e.target.value })} />
           <input className={input} placeholder="Quartier (optionnel)" value={ambForm.neighborhood} onChange={(e) => setAmbForm({ ...ambForm, neighborhood: e.target.value })} />
-          <input className={input} placeholder="WhatsApp (+223…)" value={ambForm.whatsapp} onChange={(e) => setAmbForm({ ...ambForm, whatsapp: e.target.value })} />
+          <input className={input} placeholder="Note /5 (ex: 4.9)" value={ambForm.rating} onChange={(e) => setAmbForm({ ...ambForm, rating: e.target.value })} />
+          <input className={`${input} md:col-span-2`} placeholder="ID utilisateur Awder de l'ambassadeur (pour le chat interne)" value={ambForm.uid} onChange={(e) => setAmbForm({ ...ambForm, uid: e.target.value })} />
         </div>
         <textarea className={input} rows={2} placeholder="Bio courte" value={ambForm.bio} onChange={(e) => setAmbForm({ ...ambForm, bio: e.target.value })} />
+
+        {/* Photo de l'ambassadeur */}
+        <div className="flex items-center gap-3">
+          <label className="flex items-center gap-2 bg-zinc-800/50 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-300 cursor-pointer hover:border-orange-500/50">
+            <input type="file" accept="image/*" className="hidden" onChange={(e) => uploadAmbImg(e.target.files?.[0])} />
+            {ambImgUp ? <Loader2 className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />} Photo
+          </label>
+          {ambForm.photoUrl && <img src={ambForm.photoUrl} alt="" className="w-12 h-12 rounded-full object-cover border border-zinc-700" />}
+        </div>
+
         <label className="flex items-center gap-2 text-sm text-zinc-300">
           <input type="checkbox" checked={ambForm.verified} onChange={(e) => setAmbForm({ ...ambForm, verified: e.target.checked })} />
           Ambassadeur vérifié (badge Koron)
         </label>
+        <p className="text-xs text-zinc-500">Le chat interne fonctionne si l&apos;ambassadeur a un compte Awder (colle son ID utilisateur). Sinon, ajoute son WhatsApp.</p>
+        <input className={input} placeholder="WhatsApp (secours, si pas de compte Awder)" value={ambForm.whatsapp} onChange={(e) => setAmbForm({ ...ambForm, whatsapp: e.target.value })} />
         <button onClick={addAmb} disabled={ambSaving} className="flex items-center gap-2 bg-orange-500 hover:bg-orange-400 text-white font-medium px-4 py-2 rounded-lg text-sm disabled:opacity-50">
           {ambSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Ajouter l&apos;ambassadeur
         </button>

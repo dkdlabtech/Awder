@@ -234,6 +234,18 @@ function computeCaution(flat: number | undefined, stayPrice: number): number {
   return Math.max(Number(flat) || 0, Math.round((Number(stayPrice) || 0) * CAUTION_RATE));
 }
 
+// Distance haversine (km) entre deux points GPS
+function haversineKm(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
+  const R = 6371;
+  const dLat = (b.lat - a.lat) * Math.PI / 180;
+  const dLng = (b.lng - a.lng) * Math.PI / 180;
+  const s = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * Math.PI / 180) * Math.cos(b.lat * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(s), Math.sqrt(1 - s));
+}
+function formatDistance(km: number): string {
+  return km < 1 ? `à ${Math.round(km * 1000)} m` : `à ${km.toFixed(1)} km`;
+}
+
 // ✨ Questions pré-définies avant réservation — aucun texte libre (anti-contournement)
 const PREDEFINED_QUESTIONS = [
   { id: 'dispo', icon: <Calendar className="w-4 h-4" />, text: 'Ce lieu est-il vraiment disponible pour mes dates ?' },
@@ -2261,56 +2273,61 @@ export default function HomeView() {
         const hasBooked = stayCities.length > 0;
         const cityMatch = (c?: string) => stayCities.includes((c || '').toLowerCase());
         const hoodMatch = (n?: string) => !!n && stayHoods.includes((n || '').toLowerCase());
-        // score : quartier exact d'abord, puis sponsorisé
-        const rank = (x: any) => (hoodMatch(x.neighborhood) ? 2 : 0) + (x.sponsored ? 1 : 0);
-        const matched = localDeals
-          .filter((d: any) => cityMatch(d.city))
-          .sort((a: any, b: any) => rank(b) - rank(a));
-        const ambassadors = guideAmbassadors
-          .filter((a: any) => cityMatch(a.city))
-          .sort((a: any, b: any) => (hoodMatch(b.neighborhood) ? 1 : 0) - (hoodMatch(a.neighborhood) ? 1 : 0));
 
-        // Icône selon le type de bon plan
-        const dealIcon = (type: string) => {
-          const t = (type || '').toLowerCase();
-          if (t.includes('marché') || t.includes('marche')) return <ShoppingBasket className="w-5 h-5" />;
-          if (t.includes('distraction') || t.includes('loisir') || t.includes('sortie') || t.includes('nightlife') || t.includes('attraction')) return <PartyPopper className="w-5 h-5" />;
-          if (t.includes('réduction') || t.includes('reduction')) return <Tag className="w-5 h-5" />;
-          if (t.includes('expérience') || t.includes('experience')) return <Compass className="w-5 h-5" />;
-          return <Utensils className="w-5 h-5" />;
+        // Distance depuis la position GPS du voyageur (si disponible)
+        const distKm = (coords: any) => (userLocation && coords?.lat && coords?.lng)
+          ? haversineKm(userLocation, { lat: coords.lat, lng: coords.lng }) : null;
+
+        // ✨ Bonnes adresses : visibles dès la CONNEXION (toutes, triées par proximité GPS puis quartier/sponsor)
+        const deals = [...localDeals]
+          .map((d: any) => ({ ...d, _d: distKm(d.coordinates) }))
+          .sort((a: any, b: any) => {
+            if (a._d != null && b._d != null) return a._d - b._d;
+            const rk = (x: any) => (hoodMatch(x.neighborhood) ? 2 : 0) + (x.sponsored ? 1 : 0);
+            return rk(b) - rk(a);
+          });
+
+        // ✨ Ambassadeurs : uniquement si le voyageur a RÉSERVÉ (filtrés sur la ville du séjour)
+        const ambassadors = hasBooked
+          ? guideAmbassadors.filter((a: any) => cityMatch(a.city))
+              .sort((a: any, b: any) => (hoodMatch(b.neighborhood) ? 1 : 0) - (hoodMatch(a.neighborhood) ? 1 : 0))
+          : [];
+
+        const contactAmbassador = async (a: any) => {
+          if (!user) { setShowLoginModal(true); return; }
+          if (!a.uid) { alert('Cet ambassadeur sera bientôt joignable via le chat.'); return; }
+          try {
+            const convId = await ensureConversation(user.uid, profile?.displayName ?? 'Voyageur', a.uid, a.name || 'Ambassadeur');
+            setActiveChat({ id: convId, name: a.name || 'Ambassadeur', avatar: (a.name || 'AG').slice(0, 2).toUpperCase(), otherUid: a.uid });
+          } catch (e: any) { alert(e.message); }
         };
 
         return (
           <div className="px-6 py-10 space-y-6 pb-32">
-            <div className="space-y-1">
-              <p className="awder-label text-awder-gold">Autour de votre séjour</p>
+            <div className="space-y-1.5">
+              <p className="awder-label text-awder-gold">Près de vous</p>
               <h2 className="font-display text-3xl font-semibold text-awder-brun tracking-tight">Guide</h2>
-              <p className="text-sm text-awder-grisbrun">Bonnes adresses, distractions, réductions et guides locaux — sélectionnés par Awder.</p>
+              {userLocation
+                ? <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-awder-ocre/[0.08] border border-awder-ocre/15 text-xs font-semibold text-awder-ocre"><MapPin className="w-3.5 h-3.5" /> Position GPS active</span>
+                : <p className="text-sm text-awder-grisbrun">Activez la localisation pour voir les distances.</p>}
             </div>
 
             {!user ? (
               <EmptyState
                 icon={<MapPinned className="w-8 h-8" />}
                 title="Connectez-vous pour votre guide"
-                sub="Les bonnes adresses autour de votre séjour s'affichent une fois connecté."
+                sub="Les bonnes adresses autour de vous s'affichent une fois connecté."
                 action={<button onClick={() => setShowLoginModal(true)} className="px-6 py-3 bg-awder-ocre text-white rounded-xl font-semibold text-sm">Se connecter</button>}
               />
-            ) : !hasBooked ? (
-              <EmptyState
-                icon={<Lock className="w-8 h-8" />}
-                title="Réservez pour débloquer"
-                sub="Dès votre première réservation payée, découvrez les meilleures adresses et des guides locaux autour du lieu — pensé pour la diaspora et les visiteurs."
-                action={<button onClick={() => setActiveTab('home')} className="px-6 py-3 bg-awder-ocre text-white rounded-xl font-semibold text-sm">Explorer les lieux</button>}
-              />
-            ) : (matched.length === 0 && ambassadors.length === 0) ? (
+            ) : (deals.length === 0 && ambassadors.length === 0) ? (
               <EmptyState
                 icon={<MapPin className="w-8 h-8" />}
-                title={`Bientôt à ${stayCities[0]}`}
-                sub="Nous ajoutons des bons plans et des guides dans votre ville. Revenez très vite !"
+                title="Bientôt de nouvelles adresses"
+                sub="Nous ajoutons des bons plans et des guides autour de vous. Revenez très vite !"
               />
             ) : (
               <div className="space-y-8">
-                {/* Ambassadeurs Guide — personnes physiques */}
+                {/* Ambassadeurs — seulement si réservation */}
                 {ambassadors.length > 0 && (
                   <div className="space-y-3">
                     <div>
@@ -2319,58 +2336,63 @@ export default function HomeView() {
                     </div>
                     {ambassadors.map((a: any) => (
                       <div key={a.id} className="p-4 bg-white border border-awder-sable rounded-2xl flex items-center gap-3.5">
-                        <div className="w-12 h-12 shrink-0 rounded-full bg-awder-brun text-awder-gold-soft grid place-items-center font-display font-semibold text-lg">
-                          {(a.name || 'G')[0]}
+                        <div className="w-14 h-14 shrink-0 rounded-2xl overflow-hidden bg-awder-brun text-awder-gold-soft grid place-items-center font-display font-semibold text-xl">
+                          {a.photoUrl
+                            ? <Image src={a.photoUrl} alt={a.name} width={56} height={56} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                            : (a.name || 'G')[0]}
                         </div>
                         <div className="min-w-0 flex-1">
                           <p className="font-semibold text-sm text-awder-brun flex items-center gap-2 flex-wrap">
                             {a.name}
                             {a.verified && <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-awder-gold text-awder-brun-deep rounded-full text-[10px] font-semibold"><ShieldCheck className="w-3 h-3" /> Koron</span>}
-                            {hoodMatch(a.neighborhood) && <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-awder-ocre/10 text-awder-ocre rounded-full text-[10px] font-semibold"><MapPin className="w-3 h-3" /> Votre quartier</span>}
                           </p>
                           <p className="text-xs text-awder-grisbrun mt-0.5">{[a.specialty, a.neighborhood].filter(Boolean).join(' · ')}</p>
-                          {a.bio && <p className="text-[13px] text-awder-brun/80 mt-1 leading-relaxed">{a.bio}</p>}
+                          {a.rating ? (
+                            <span className="inline-flex items-center gap-1 mt-1 text-xs text-awder-brun"><Star className="w-3.5 h-3.5 text-awder-gold fill-awder-gold" /> {a.rating}</span>
+                          ) : null}
                         </div>
-                        {a.whatsapp && (
-                          <a
-                            href={`https://wa.me/${(a.whatsapp || '').replace(/[^0-9]/g, '')}`}
-                            target="_blank" rel="noopener noreferrer"
-                            className="shrink-0 px-3.5 py-2 bg-awder-ocre text-white rounded-lg text-xs font-semibold"
-                          >
-                            Contacter
-                          </a>
-                        )}
+                        <button onClick={() => contactAmbassador(a)} className="shrink-0 px-3.5 py-2 bg-awder-ocre text-white rounded-lg text-xs font-semibold active:scale-95 transition-all">
+                          Contacter
+                        </button>
                       </div>
                     ))}
                   </div>
                 )}
 
-                {/* Bons plans */}
-                {matched.length > 0 && (
+                {/* Bonnes adresses avec photo + distance */}
+                {deals.length > 0 && (
                   <div className="space-y-3">
                     <div>
                       <h3 className="font-semibold text-awder-brun text-lg">Bonnes adresses</h3>
                       <p className="awder-label text-awder-gold mt-0.5">Restos, distractions &amp; réductions</p>
                     </div>
-                    {matched.map((d: any) => (
-                      <div key={d.id} className="p-4 bg-white border border-awder-sable rounded-2xl flex items-start gap-3.5">
-                        <span className="w-11 h-11 shrink-0 rounded-xl bg-awder-ocre/10 text-awder-ocre grid place-items-center">
-                          {dealIcon(d.type)}
-                        </span>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <p className="font-semibold text-sm text-awder-brun">{d.title}</p>
+                    {deals.map((d: any) => (
+                      <div key={d.id} className="bg-white border border-awder-sable rounded-2xl overflow-hidden">
+                        <div className="relative h-32 bg-gradient-to-br from-awder-gold to-awder-ocre">
+                          {d.imageUrl && <Image src={d.imageUrl} alt={d.title} fill sizes="380px" className="object-cover" referrerPolicy="no-referrer" />}
+                          <span className="absolute top-2.5 left-2.5 bg-awder-offwhite/92 text-awder-ocre text-[10px] font-semibold px-2.5 py-1 rounded-full">{d.type}</span>
+                          {d.discount && <span className="absolute top-2.5 right-2.5 bg-awder-bogolan text-white text-[11px] font-semibold px-2.5 py-1 rounded-full">{d.discount}</span>}
+                          {d._d != null && (
+                            <span className="absolute bottom-2.5 left-2.5 inline-flex items-center gap-1 bg-awder-brun/55 backdrop-blur-sm text-white text-[11px] font-semibold px-2.5 py-1 rounded-full">
+                              <MapPin className="w-3 h-3" /> {formatDistance(d._d)}
+                            </span>
+                          )}
+                        </div>
+                        <div className="p-3.5">
+                          <p className="font-semibold text-sm text-awder-brun flex items-center gap-2 flex-wrap">
+                            {d.title}
                             {d.sponsored && <span className="px-2 py-0.5 bg-awder-gold text-awder-brun-deep rounded-full text-[10px] font-semibold">Partenaire</span>}
                             {hoodMatch(d.neighborhood) && <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-awder-ocre/10 text-awder-ocre rounded-full text-[10px] font-semibold"><MapPin className="w-3 h-3" /> Votre quartier</span>}
-                          </div>
-                          <p className="text-xs text-awder-grisbrun mt-0.5">
-                            {[d.type, d.neighborhood, d.distance].filter(Boolean).join(' · ')}
                           </p>
-                          {d.description && <p className="text-[13px] text-awder-brun/80 mt-1.5 leading-relaxed">{d.description}</p>}
-                          {d.discount && (
-                            <span className="inline-block mt-2 px-2.5 py-1 bg-awder-bogolan/12 text-awder-bogolan rounded-full text-xs font-semibold">
-                              {d.discount}
-                            </span>
+                          {d.description && <p className="text-[13px] text-awder-brun/80 mt-1 leading-relaxed">{d.description}</p>}
+                          {d.coordinates?.lat && d.coordinates?.lng && (
+                            <a
+                              href={`https://www.google.com/maps/dir/?api=1&destination=${d.coordinates.lat},${d.coordinates.lng}`}
+                              target="_blank" rel="noopener noreferrer"
+                              className="mt-2.5 w-full py-2.5 border border-awder-sable rounded-xl text-xs font-semibold text-awder-brun flex items-center justify-center gap-1.5"
+                            >
+                              <Map className="w-3.5 h-3.5 text-awder-ocre" /> Itinéraire
+                            </a>
                           )}
                         </div>
                       </div>

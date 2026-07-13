@@ -91,6 +91,11 @@ export async function uploadListingImages(files: File[], listingId: string): Pro
   return Promise.all(files.map((f) => uploadListingImage(f, listingId)));
 }
 
+/** Upload une image pour le Guide (bon plan ou ambassadeur). */
+export async function uploadGuideImage(file: File, kind: 'deal' | 'ambassador'): Promise<string> {
+  return cloudinaryUpload(file, `awder/guide/${kind}`);
+}
+
 /** Upload une photo de profil ou pièce d'identité utilisateur. */
 export async function uploadUserImage(
   file: File,
